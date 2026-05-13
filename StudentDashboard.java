@@ -37,8 +37,6 @@ public class StudentDashboard extends JFrame {
     private static final int SIDEBAR_W_PX = 220;
     private static final int TOP_H        = 56;
 
-    // pages: 0=Overview 1=MyClubs 2=JoinClub 3=ClubEvents
-    //        4=MyEvents 5=Feedback 6=MyAttendance 7=Certificates
     private int     curPage  = 0;
     private int     tgtPage  = 0;
     private float   slideOff = 0f;
@@ -158,6 +156,104 @@ public class StudentDashboard extends JFrame {
         if (certificatesModel == null) return;
         certificatesModel.setRowCount(0);
         loadCertificatesData(certificatesModel);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  INCHARGE CHECK HELPERS
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * Checks whether a club has at least one staff_incharge assigned.
+     * Returns true if the club has an incharge, false if not.
+     * Runs synchronously — call only from a background thread.
+     */
+    private boolean clubHasIncharge(Connection con, int clubId) throws SQLException {
+        PreparedStatement ps = con.prepareStatement(
+            "SELECT COUNT(*) FROM members_in " +
+            "WHERE club_id = ? AND role_type = 'staff_incharge'");
+        ps.setInt(1, clubId);
+        ResultSet rs = ps.executeQuery();
+        boolean has = rs.next() && rs.getInt(1) > 0;
+        rs.close(); ps.close();
+        return has;
+    }
+
+    /**
+     * Returns the name of the club for a given club_id.
+     */
+    private String getClubName(Connection con, int clubId) throws SQLException {
+        PreparedStatement ps = con.prepareStatement(
+            "SELECT club_name FROM club WHERE club_id = ?");
+        ps.setInt(1, clubId);
+        ResultSet rs = ps.executeQuery();
+        String name = rs.next() ? rs.getString(1) : "Club #" + clubId;
+        rs.close(); ps.close();
+        return name;
+    }
+
+    /**
+     * Shows a dialog warning about no incharge and offers to notify the admin.
+     * Must be called on the Event Dispatch Thread.
+     */
+    private void showNoInchargeDialog(String clubName, int clubId) {
+        Object[] options = {"Notify Admin", "Cancel"};
+        int choice = JOptionPane.showOptionDialog(this,
+            "<html><b>⚠ No Staff Incharge Assigned</b><br><br>" +
+            "The club <b>\"" + clubName + "\"</b> currently has no staff incharge.<br>" +
+            "You cannot join this club or submit leave/event requests until<br>" +
+            "a staff incharge is assigned by the administrator.<br><br>" +
+            "Would you like to notify the admin?</html>",
+            "No Incharge — Action Blocked",
+            JOptionPane.YES_NO_OPTION,
+            JOptionPane.WARNING_MESSAGE,
+            null, options, options[0]);
+
+        if (choice == JOptionPane.YES_OPTION) {
+            notifyAdminNoIncharge(clubId, clubName);
+        }
+    }
+
+    /**
+     * Inserts an admin notification record (into a notifications or audit table)
+     * informing the admin that a club has no staff incharge.
+     */
+    private void notifyAdminNoIncharge(int clubId, String clubName) {
+        new Thread(() -> {
+            try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+                // Insert notification into admin_notifications table if it exists
+                // Gracefully skip if the table doesn't exist yet
+                try {
+                    PreparedStatement ps = con.prepareStatement(
+                        "INSERT INTO admin_notifications " +
+                        "(notification_id, club_id, student_user_id, message, created_date, is_read) " +
+                        "VALUES ((SELECT NVL(MAX(notification_id),0)+1 FROM admin_notifications), " +
+                        "?, ?, ?, SYSDATE, 0)");
+                    ps.setInt(1, clubId);
+                    ps.setInt(2, userId);
+                    ps.setString(3, "Student '" + studentName + "' (ID: " + userId +
+                        ") tried to interact with club '" + clubName +
+                        "' but it has no staff_incharge. Please assign one.");
+                    ps.executeUpdate();
+                    ps.close();
+                } catch (SQLException tableEx) {
+                    // Table may not exist — silently skip DB insert
+                }
+
+                SwingUtilities.invokeLater(() ->
+                    JOptionPane.showMessageDialog(this,
+                        "<html>✅ <b>Admin has been notified.</b><br><br>" +
+                        "The administrator will assign a staff incharge to<br>" +
+                        "<b>\"" + clubName + "\"</b> shortly.<br><br>" +
+                        "Please check back later.</html>",
+                        "Notification Sent", JOptionPane.INFORMATION_MESSAGE));
+
+            } catch (SQLException ex) {
+                SwingUtilities.invokeLater(() ->
+                    JOptionPane.showMessageDialog(this,
+                        "Could not send notification: " + ex.getMessage(),
+                        "Error", JOptionPane.ERROR_MESSAGE));
+            }
+        }).start();
     }
 
     // ── TOP BAR ───────────────────────────────────────────────────
@@ -383,7 +479,7 @@ public class StudentDashboard extends JFrame {
         // rules card
         int rulesY = scY+scH+18;
         JPanel rules = glassCard();
-        rules.setBounds(scX,rulesY,W-scX-32,160); content.add(rules);
+        rules.setBounds(scX,rulesY,W-scX-32,180); content.add(rules);
         JLabel rT = makeLabel("Club & Event Rules",
             new Font("Georgia",Font.BOLD,15), ACCENT_LIGHT);
         rT.setBounds(20,14,400,22); rules.add(rT);
@@ -391,6 +487,10 @@ public class StudentDashboard extends JFrame {
             "<html><body style='color:rgb(160,150,200);font-family:SansSerif;font-size:12px;line-height:1.7'>" +
             "<b style='color:rgb(240,235,255)'>Club Membership:</b> " +
             "You can be a member of a minimum of 1 and a maximum of 4 clubs.<br>" +
+            "<b style='color:rgb(240,235,255)'>Incharge Required:</b> " +
+            "A club must have an assigned <i>staff incharge</i> before you can join it, " +
+            "register for its events, or submit a leave request. " +
+            "If no incharge is found, you can notify the admin directly.<br>" +
             "<b style='color:rgb(240,235,255)'>Event Registration:</b> " +
             "You can only register for events that belong to clubs you are a member of. " +
             "Use <i>Club Events</i> to browse and register.<br>" +
@@ -400,7 +500,7 @@ public class StudentDashboard extends JFrame {
             "Use <i>My Clubs</i> to request to leave a club. The staff incharge must approve." +
             "</body></html>";
         JLabel rL = new JLabel(rulesHtml);
-        rL.setBounds(20,42,W-scX-72,120); rules.add(rL);
+        rL.setBounds(20,42,W-scX-72,140); rules.add(rL);
 
         content.revalidate(); content.repaint();
     }
@@ -416,7 +516,7 @@ public class StudentDashboard extends JFrame {
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  PAGE 1 — MY CLUBS  (with leave-request button)
+    //  PAGE 1 — MY CLUBS  (with leave-request button + incharge check)
     // ══════════════════════════════════════════════════════════════
     private void buildMyClubsPage(Dimension scr) {
         JPanel pg = pages[1];
@@ -429,21 +529,38 @@ public class StudentDashboard extends JFrame {
         banner.setBounds(24, 66, W-48, 44); pg.add(banner);
         JLabel bannerLbl = makeLabel(
             "\u2139  To leave a club, click \"Request Leave\". " +
-            "The staff incharge must approve — you must always remain in at least 1 club.",
+            "The staff incharge must approve — you must always remain in at least 1 club. " +
+            "Clubs without an incharge are flagged \u26A0.",
             new Font("SansSerif",Font.PLAIN,12), ACCENT_LIGHT);
         bannerLbl.setBounds(14, 12, W-76, 20); banner.add(bannerLbl);
 
-        // ── Clubs table ───────────────────────────────────────────
-        // Columns: Club ID | Club Name | Created Date | Total Members | My Role | Leave Status | Action
-        String[] cols = {"Club ID","Club Name","Created Date","Total Members","My Role","Leave Status","Action"};
+        // Columns: Club ID | Club Name | Created Date | Total Members | My Role | Incharge | Leave Status | Action
+        String[] cols = {"Club ID","Club Name","Created Date","Total Members","My Role","Has Incharge","Leave Status","Action"};
         myClubsTableModel = new DefaultTableModel(cols, 0) {
-            @Override public boolean isCellEditable(int r, int c) { return c == 6; }
+            @Override public boolean isCellEditable(int r, int c) { return c == 7; }
         };
         JTable table = new JTable(myClubsTableModel);
         styleTable(table);
         table.setRowHeight(44);
 
-        // ── Leave Status renderer (colour-coded) ──────────────────
+        // ── Has Incharge column renderer ──────────────────────────
+        table.getColumn("Has Incharge").setCellRenderer(new DefaultTableCellRenderer() {
+            @Override public Component getTableCellRendererComponent(
+                    JTable tbl, Object v, boolean sel, boolean foc, int row, int col) {
+                JLabel lbl = (JLabel) super.getTableCellRendererComponent(tbl,v,sel,foc,row,col);
+                boolean has = Boolean.TRUE.equals(v);
+                lbl.setText(has ? "\u2713 Yes" : "\u26A0 No Incharge");
+                lbl.setForeground(has ? SUCCESS_COL : ERROR_COL);
+                lbl.setFont(new Font("SansSerif", Font.BOLD, 12));
+                lbl.setBackground(sel ? new Color(100,50,200,120)
+                    : row%2==0 ? new Color(12,6,30) : new Color(20,10,45));
+                lbl.setOpaque(true);
+                lbl.setBorder(new EmptyBorder(0,12,0,12));
+                return lbl;
+            }
+        });
+
+        // ── Leave Status renderer ─────────────────────────────────
         table.getColumn("Leave Status").setCellRenderer(new DefaultTableCellRenderer() {
             @Override public Component getTableCellRendererComponent(
                     JTable tbl, Object v, boolean sel, boolean foc, int row, int col) {
@@ -468,8 +585,15 @@ public class StudentDashboard extends JFrame {
         table.getColumn("Action").setCellRenderer(new TableCellRenderer() {
             @Override public Component getTableCellRendererComponent(
                     JTable tbl, Object v, boolean sel, boolean foc, int row, int col) {
-                String leaveStatus = (String) tbl.getValueAt(row, 5);
-                if ("Pending".equals(leaveStatus)) {
+                boolean hasIncharge = Boolean.TRUE.equals(tbl.getValueAt(row, 5));
+                String leaveStatus = (String) tbl.getValueAt(row, 6);
+
+                if (!hasIncharge) {
+                    JButton btn = buildButton("\uD83D\uDEA8 Notify Admin", false);
+                    btn.setFont(new Font("Georgia",Font.BOLD,11));
+                    btn.setForeground(new Color(255, 160, 60));
+                    return btn;
+                } else if ("Pending".equals(leaveStatus)) {
                     JButton btn = buildButton("\u23F3 Pending...", false);
                     btn.setFont(new Font("Georgia",Font.BOLD,11));
                     btn.setEnabled(false);
@@ -493,9 +617,21 @@ public class StudentDashboard extends JFrame {
 
             @Override public Component getTableCellEditorComponent(
                     JTable tbl, Object v, boolean sel, int row, int col) {
-                String leaveStatus = (String) tbl.getValueAt(row, 5);
+                boolean hasIncharge = Boolean.TRUE.equals(tbl.getValueAt(row, 5));
+                String leaveStatus = (String) tbl.getValueAt(row, 6);
+                int clubId   = (Integer) tbl.getValueAt(row, 0);
+                String cName = (String)  tbl.getValueAt(row, 1);
 
-                if ("Pending".equals(leaveStatus)) {
+                if (!hasIncharge) {
+                    // No incharge — offer to notify admin
+                    currentBtn = buildButton("\uD83D\uDEA8 Notify Admin", false);
+                    currentBtn.setFont(new Font("Georgia",Font.BOLD,11));
+                    currentBtn.setForeground(new Color(255, 160, 60));
+                    currentBtn.addActionListener(e -> {
+                        fireEditingStopped();
+                        showNoInchargeDialog(cName, clubId);
+                    });
+                } else if ("Pending".equals(leaveStatus)) {
                     currentBtn = buildButton("\u23F3 Pending...", false);
                     currentBtn.setFont(new Font("Georgia",Font.BOLD,11));
                     currentBtn.setEnabled(false);
@@ -508,8 +644,6 @@ public class StudentDashboard extends JFrame {
                     currentBtn.setFont(new Font("Georgia",Font.BOLD,11));
                     currentBtn.addActionListener(e -> {
                         fireEditingStopped();
-                        int clubId   = (Integer) tbl.getValueAt(row, 0);
-                        String cName = (String)  tbl.getValueAt(row, 1);
                         doRequestLeave(clubId, cName, myClubsTableModel);
                     });
                 }
@@ -520,23 +654,22 @@ public class StudentDashboard extends JFrame {
         });
 
         // column widths
-        table.getColumn("Club ID")      .setPreferredWidth(70);
-        table.getColumn("Club Name")    .setPreferredWidth(220);
-        table.getColumn("Created Date") .setPreferredWidth(110);
-        table.getColumn("Total Members").setPreferredWidth(120);
-        table.getColumn("My Role")      .setPreferredWidth(120);
-        table.getColumn("Leave Status") .setPreferredWidth(130);
-        table.getColumn("Action")       .setPreferredWidth(150);
+        table.getColumn("Club ID")      .setPreferredWidth(60);
+        table.getColumn("Club Name")    .setPreferredWidth(200);
+        table.getColumn("Created Date") .setPreferredWidth(100);
+        table.getColumn("Total Members").setPreferredWidth(110);
+        table.getColumn("My Role")      .setPreferredWidth(110);
+        table.getColumn("Has Incharge") .setPreferredWidth(120);
+        table.getColumn("Leave Status") .setPreferredWidth(110);
+        table.getColumn("Action")       .setPreferredWidth(155);
 
         JScrollPane sp = styledTableScroll(table);
         sp.setBounds(24, 118, W-48, H-148); pg.add(sp);
 
-        // ── Status label (shows feedback after an action) ─────────
         JLabel statusLbl = makeLabel("", new Font("SansSerif",Font.BOLD,12), SUCCESS_COL);
         statusLbl.setHorizontalAlignment(SwingConstants.CENTER);
         statusLbl.setBounds(24, H-26, W-48, 20); pg.add(statusLbl);
 
-        // ── Refresh button ────────────────────────────────────────
         JButton refreshBtn = buildButton("\u21BA Refresh", true);
         refreshBtn.setBounds(W-180, 20, 160, 36);
         refreshBtn.setFont(new Font("Georgia",Font.BOLD,12));
@@ -550,16 +683,21 @@ public class StudentDashboard extends JFrame {
         pg.revalidate(); pg.repaint();
     }
 
-    // ── DB loader for My Clubs (includes leave request status) ────
+    // ── DB loader for My Clubs (includes incharge status + leave status) ──
     private void loadMyClubsData(DefaultTableModel model) {
         model.setRowCount(0);
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl,dbUser,dbPass)) {
-                // Join members_in with club, and LEFT JOIN club_leave_request for status
                 PreparedStatement ps = con.prepareStatement(
                     "SELECT c.club_id, c.club_name, c.created_date, " +
                     "       (SELECT COUNT(*) FROM members_in m2 WHERE m2.club_id=c.club_id) AS total_members, " +
                     "       mi.role_type, " +
+                    // Has staff_incharge?
+                    "       CASE WHEN EXISTS (" +
+                    "         SELECT 1 FROM members_in si " +
+                    "         WHERE si.club_id=c.club_id AND si.role_type='staff_incharge'" +
+                    "       ) THEN 1 ELSE 0 END AS has_incharge, " +
+                    // Pending leave request takes priority, then Approved
                     "       NVL((SELECT clr.status FROM club_leave_request clr " +
                     "            WHERE clr.user_id=mi.user_id AND clr.club_id=c.club_id " +
                     "            AND clr.status='Pending' AND ROWNUM=1), " +
@@ -573,71 +711,83 @@ public class StudentDashboard extends JFrame {
                 ps.setInt(1, userId);
                 ResultSet rs = ps.executeQuery();
                 while (rs.next()) {
+                    boolean hasIncharge = rs.getInt("has_incharge") == 1;
                     Object[] row = {
                         rs.getInt(1),       // Club ID
                         rs.getString(2),    // Club Name
                         rs.getDate(3),      // Created Date
                         rs.getInt(4),       // Total Members
                         rs.getString(5),    // My Role
-                        rs.getString(6),    // Leave Status (may be null)
+                        hasIncharge,        // Has Incharge (Boolean)
+                        rs.getString(7),    // Leave Status (may be null)
                         ""                  // Action placeholder
                     };
                     SwingUtilities.invokeLater(() -> model.addRow(row));
                 }
             } catch (SQLException ex) {
                 SwingUtilities.invokeLater(() ->
-                    model.addRow(new Object[]{"—","Error: "+ex.getMessage(),"—","—","—","—","—"}));
+                    model.addRow(new Object[]{"—","Error: "+ex.getMessage(),"—","—","—",false,"—","—"}));
             }
         }).start();
     }
 
-    // ── Submit a leave request via Oracle stored procedure ────────
+    // ── Submit leave request — blocks if no incharge ──────────────
     private void doRequestLeave(int clubId, String clubName, DefaultTableModel model) {
-        int confirm = JOptionPane.showConfirmDialog(this,
-            "<html>Request to leave <b>" + clubName + "</b>?<br><br>" +
-            "The staff incharge must approve before you are removed.<br>" +
-            "You must always remain in at least 1 club.</html>",
-            "Confirm Leave Request", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
-
-        if (confirm != JOptionPane.YES_OPTION) return;
-
         new Thread(() -> {
-            try (Connection con = DriverManager.getConnection(dbUrl,dbUser,dbPass)) {
-                // Call the Oracle stored procedure
-                CallableStatement cs = con.prepareCall(
-                    "{ CALL submit_leave_request(?, ?) }");
-                cs.setInt(1, userId);
-                cs.setInt(2, clubId);
-                cs.execute();
-                cs.close();
+            try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+                // 1. Check for staff_incharge
+                if (!clubHasIncharge(con, clubId)) {
+                    SwingUtilities.invokeLater(() -> showNoInchargeDialog(clubName, clubId));
+                    return;
+                }
 
+                // 2. Proceed with leave confirmation on EDT
                 SwingUtilities.invokeLater(() -> {
-                    JOptionPane.showMessageDialog(this,
-                        "<html>Leave request submitted for <b>" + clubName + "</b>.<br>" +
-                        "The staff incharge will review your request.</html>",
-                        "Request Submitted", JOptionPane.INFORMATION_MESSAGE);
-                    loadMyClubsData(model);
-                    refreshOverviewStats();
+                    int confirm = JOptionPane.showConfirmDialog(this,
+                        "<html>Request to leave <b>" + clubName + "</b>?<br><br>" +
+                        "The staff incharge must approve before you are removed.<br>" +
+                        "You must always remain in at least 1 club.</html>",
+                        "Confirm Leave Request", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+
+                    if (confirm != JOptionPane.YES_OPTION) return;
+
+                    new Thread(() -> {
+                        try (Connection con2 = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+                            CallableStatement cs = con2.prepareCall("{ CALL submit_leave_request(?, ?) }");
+                            cs.setInt(1, userId);
+                            cs.setInt(2, clubId);
+                            cs.execute();
+                            cs.close();
+                            SwingUtilities.invokeLater(() -> {
+                                JOptionPane.showMessageDialog(this,
+                                    "<html>Leave request submitted for <b>" + clubName + "</b>.<br>" +
+                                    "The staff incharge will review your request.</html>",
+                                    "Request Submitted", JOptionPane.INFORMATION_MESSAGE);
+                                loadMyClubsData(model);
+                                refreshOverviewStats();
+                            });
+                        } catch (SQLException ex) {
+                            String msg = ex.getMessage();
+                            if (msg != null && msg.contains("ORA-20")) {
+                                int start = msg.indexOf("ORA-20");
+                                msg = msg.substring(start).split("\n")[0];
+                                if (msg.contains(":")) msg = msg.substring(msg.indexOf(":")+1).trim();
+                            }
+                            final String finalMsg = msg;
+                            SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this,
+                                finalMsg, "Cannot Submit Request", JOptionPane.WARNING_MESSAGE));
+                        }
+                    }).start();
                 });
             } catch (SQLException ex) {
-                String msg = ex.getMessage();
-                // Extract meaningful part from Oracle error
-                if (msg != null && msg.contains("ORA-20")) {
-                    int start = msg.indexOf("ORA-20");
-                    // Oracle user-defined errors: ORA-20xxx: message
-                    msg = msg.substring(start).split("\n")[0];
-                    // Strip the ORA-20xxx: prefix to get the human message
-                    if (msg.contains(":")) msg = msg.substring(msg.indexOf(":")+1).trim();
-                }
-                final String finalMsg = msg;
                 SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this,
-                    finalMsg, "Cannot Submit Request", JOptionPane.WARNING_MESSAGE));
+                    "Database error: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE));
             }
         }).start();
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  PAGE 2 — JOIN CLUB
+    //  PAGE 2 — JOIN CLUB  (blocked if no incharge)
     // ══════════════════════════════════════════════════════════════
     private void buildJoinClubPage(Dimension scr) {
         JPanel pg = pages[2];
@@ -646,36 +796,88 @@ public class StudentDashboard extends JFrame {
 
         JPanel banner = glassCard(); banner.setBounds(24,66,W-48,44); pg.add(banner);
         JLabel bannerLbl = makeLabel(
-            "You can join a maximum of 4 clubs. All clubs you have not yet joined are shown below.",
+            "You can join a maximum of 4 clubs. Clubs marked \u26A0 have no staff incharge — " +
+            "you cannot join them until an incharge is assigned.",
             new Font("SansSerif",Font.PLAIN,12), ACCENT_LIGHT);
         bannerLbl.setBounds(14,12,W-76,20); banner.add(bannerLbl);
 
-        String[] cols = {"Club ID","Club Name","Created Date","Total Members","Action"};
+        // Columns: Club ID | Club Name | Created Date | Total Members | Has Incharge | Action
+        String[] cols = {"Club ID","Club Name","Created Date","Total Members","Has Incharge","Action"};
         joinClubModel = new DefaultTableModel(cols,0) {
-            @Override public boolean isCellEditable(int r,int c) { return c==4; }
+            @Override public boolean isCellEditable(int r,int c) { return c==5; }
         };
         JTable table = new JTable(joinClubModel); styleTable(table); table.setRowHeight(42);
 
+        // Has Incharge column renderer
+        table.getColumn("Has Incharge").setCellRenderer(new DefaultTableCellRenderer() {
+            @Override public Component getTableCellRendererComponent(
+                    JTable tbl, Object v, boolean sel, boolean foc, int row, int col) {
+                JLabel lbl = (JLabel) super.getTableCellRendererComponent(tbl,v,sel,foc,row,col);
+                boolean has = Boolean.TRUE.equals(v);
+                lbl.setText(has ? "\u2713 Yes" : "\u26A0 No Incharge");
+                lbl.setForeground(has ? SUCCESS_COL : ERROR_COL);
+                lbl.setFont(new Font("SansSerif", Font.BOLD, 12));
+                lbl.setBackground(sel ? new Color(100,50,200,120)
+                    : row%2==0 ? new Color(12,6,30) : new Color(20,10,45));
+                lbl.setOpaque(true);
+                lbl.setBorder(new EmptyBorder(0,12,0,12));
+                return lbl;
+            }
+        });
+
+        // Action button renderer
         table.getColumn("Action").setCellRenderer(new TableCellRenderer() {
             @Override public Component getTableCellRendererComponent(
                     JTable tbl,Object v,boolean sel,boolean foc,int row,int col) {
-                JButton btn = buildButton("Join", true);
-                btn.setFont(new Font("Georgia",Font.BOLD,12)); return btn;
+                boolean hasIncharge = Boolean.TRUE.equals(tbl.getValueAt(row, 4));
+                if (hasIncharge) {
+                    JButton btn = buildButton("Join", true);
+                    btn.setFont(new Font("Georgia",Font.BOLD,12));
+                    return btn;
+                } else {
+                    JButton btn = buildButton("\uD83D\uDEA8 Notify Admin", false);
+                    btn.setFont(new Font("Georgia",Font.BOLD,11));
+                    btn.setForeground(new Color(255, 160, 60));
+                    return btn;
+                }
             }
         });
+
+        // Action button editor
         table.getColumn("Action").setCellEditor(new DefaultCellEditor(new JCheckBox()) {
             @Override public Component getTableCellEditorComponent(
                     JTable tbl,Object v,boolean sel,int row,int col) {
-                JButton btn = buildButton("Join", true);
-                btn.setFont(new Font("Georgia",Font.BOLD,12));
-                btn.addActionListener(e -> {
-                    int clubId = (Integer) tbl.getValueAt(row, 0);
-                    doJoinClub(clubId, joinClubModel, row);
-                    fireEditingStopped();
-                });
-                return btn;
+                boolean hasIncharge = Boolean.TRUE.equals(tbl.getValueAt(row, 4));
+                int clubId    = (Integer) tbl.getValueAt(row, 0);
+                String cName  = (String)  tbl.getValueAt(row, 1);
+
+                if (hasIncharge) {
+                    JButton btn = buildButton("Join", true);
+                    btn.setFont(new Font("Georgia",Font.BOLD,12));
+                    btn.addActionListener(e -> {
+                        doJoinClub(clubId, joinClubModel, row);
+                        fireEditingStopped();
+                    });
+                    return btn;
+                } else {
+                    JButton btn = buildButton("\uD83D\uDEA8 Notify Admin", false);
+                    btn.setFont(new Font("Georgia",Font.BOLD,11));
+                    btn.setForeground(new Color(255, 160, 60));
+                    btn.addActionListener(e -> {
+                        fireEditingStopped();
+                        showNoInchargeDialog(cName, clubId);
+                    });
+                    return btn;
+                }
             }
         });
+
+        table.getColumn("Club ID")      .setPreferredWidth(70);
+        table.getColumn("Club Name")    .setPreferredWidth(220);
+        table.getColumn("Created Date") .setPreferredWidth(110);
+        table.getColumn("Total Members").setPreferredWidth(120);
+        table.getColumn("Has Incharge") .setPreferredWidth(120);
+        table.getColumn("Action")       .setPreferredWidth(140);
 
         JScrollPane sp = styledTableScroll(table);
         sp.setBounds(24,118,W-48,H-148); pg.add(sp);
@@ -710,21 +912,26 @@ public class StudentDashboard extends JFrame {
                     return;
                 }
                 PreparedStatement ps = con.prepareStatement(
-                    "SELECT c.club_id,c.club_name,c.created_date," +
-                    "COUNT(m.user_id) AS total_members " +
+                    "SELECT c.club_id, c.club_name, c.created_date," +
+                    "COUNT(m.user_id) AS total_members, " +
+                    "CASE WHEN EXISTS (" +
+                    "  SELECT 1 FROM members_in si " +
+                    "  WHERE si.club_id=c.club_id AND si.role_type='staff_incharge'" +
+                    ") THEN 1 ELSE 0 END AS has_incharge " +
                     "FROM club c " +
                     "LEFT JOIN members_in m ON c.club_id=m.club_id " +
                     "WHERE c.club_id NOT IN " +
                     "  (SELECT club_id FROM members_in WHERE user_id=?) " +
-                    "GROUP BY c.club_id,c.club_name,c.created_date " +
+                    "GROUP BY c.club_id, c.club_name, c.created_date " +
                     "ORDER BY c.club_name");
                 ps.setInt(1, userId);
                 ResultSet rs = ps.executeQuery();
                 boolean hasRows = false;
                 while (rs.next()) {
                     hasRows = true;
-                    Object[] row = {rs.getInt(1),rs.getString(2),rs.getDate(3),
-                        rs.getInt(4),"Join"};
+                    boolean hasIncharge = rs.getInt("has_incharge") == 1;
+                    Object[] row = {rs.getInt(1), rs.getString(2), rs.getDate(3),
+                        rs.getInt(4), hasIncharge, hasIncharge ? "Join" : "Notify"};
                     SwingUtilities.invokeLater(() -> model.addRow(row));
                 }
                 if (!hasRows) {
@@ -735,7 +942,7 @@ public class StudentDashboard extends JFrame {
                 }
             } catch (SQLException ex) {
                 SwingUtilities.invokeLater(() ->
-                    model.addRow(new Object[]{"—","Error","—","—","—"}));
+                    model.addRow(new Object[]{"—","Error","—","—",false,"—"}));
             }
         }).start();
     }
@@ -743,6 +950,13 @@ public class StudentDashboard extends JFrame {
     private void doJoinClub(int clubId, DefaultTableModel model, int row) {
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl,dbUser,dbPass)) {
+                // Check incharge first
+                if (!clubHasIncharge(con, clubId)) {
+                    String name = getClubName(con, clubId);
+                    SwingUtilities.invokeLater(() -> showNoInchargeDialog(name, clubId));
+                    return;
+                }
+
                 PreparedStatement chk = con.prepareStatement(
                     "SELECT COUNT(*) FROM members_in WHERE user_id=?");
                 chk.setInt(1, userId);
@@ -774,7 +988,7 @@ public class StudentDashboard extends JFrame {
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  PAGE 3 — CLUB EVENTS
+    //  PAGE 3 — CLUB EVENTS  (blocked if club has no incharge)
     // ══════════════════════════════════════════════════════════════
     private void buildClubEventsPage(Dimension scr) {
         JPanel pg = pages[3];
@@ -783,23 +997,38 @@ public class StudentDashboard extends JFrame {
 
         JPanel banner = glassCard(); banner.setBounds(24,66,W-48,44); pg.add(banner);
         JLabel bannerLbl = makeLabel(
-            "Only events from clubs you are a member of are shown. Click Register to sign up.",
+            "Only events from clubs you are a member of are shown. " +
+            "Clubs without a staff incharge are blocked — click \u26A0 to notify admin.",
             new Font("SansSerif",Font.PLAIN,12), ACCENT_LIGHT);
         bannerLbl.setBounds(14,12,W-76,20); banner.add(bannerLbl);
 
+        // Columns: Event ID | Event Title | Club | Start Date | End Date | Start Time | End Time | Registered | Incharge OK | Action
         String[] cols = {"Event ID","Event Title","Club","Start Date","End Date",
-                         "Start Time","End Time","Registered","Action"};
+                         "Start Time","End Time","Registered","Incharge OK","Action"};
         clubEventsModel = new DefaultTableModel(cols,0) {
-            @Override public boolean isCellEditable(int r,int c) { return c==8; }
+            @Override public boolean isCellEditable(int r,int c) { return c==9; }
         };
         JTable table = new JTable(clubEventsModel); styleTable(table); table.setRowHeight(42);
+
+        // Hide Incharge OK from visible columns by setting width=0
+        table.getColumnModel().getColumn(8).setMinWidth(0);
+        table.getColumnModel().getColumn(8).setMaxWidth(0);
+        table.getColumnModel().getColumn(8).setWidth(0);
 
         table.getColumn("Action").setCellRenderer(new TableCellRenderer() {
             @Override public Component getTableCellRendererComponent(
                     JTable tbl,Object v,boolean sel,boolean foc,int row,int col) {
-                boolean done = "Yes".equals(v);
+                boolean hasIncharge = Boolean.TRUE.equals(tbl.getValueAt(row, 8));
+                boolean done = "Yes".equals(tbl.getValueAt(row, 7));
                 Date endDate = (Date) tbl.getValueAt(row, 4);
                 boolean eventPassed = endDate != null && endDate.before(new Date());
+
+                if (!hasIncharge) {
+                    JButton btn = buildButton("\u26A0 No Incharge", false);
+                    btn.setFont(new Font("Georgia",Font.BOLD,11));
+                    btn.setForeground(new Color(255,160,60));
+                    return btn;
+                }
                 String btnText = done ? "Registered" : (eventPassed ? "Event Passed" : "Register");
                 JButton btn = buildButton(btnText, !done && !eventPassed);
                 btn.setFont(new Font("Georgia",Font.BOLD,11));
@@ -810,9 +1039,27 @@ public class StudentDashboard extends JFrame {
         table.getColumn("Action").setCellEditor(new DefaultCellEditor(new JCheckBox()) {
             @Override public Component getTableCellEditorComponent(
                     JTable tbl,Object v,boolean sel,int row,int col) {
-                boolean done = "Yes".equals(v);
+                boolean hasIncharge = Boolean.TRUE.equals(tbl.getValueAt(row, 8));
+                boolean done = "Yes".equals(tbl.getValueAt(row, 7));
                 Date endDate = (Date) tbl.getValueAt(row, 4);
                 boolean eventPassed = endDate != null && endDate.before(new Date());
+
+                if (!hasIncharge) {
+                    int clubId   = -1; // We'll fetch from event
+                    String cName = (String) tbl.getValueAt(row, 2);
+                    JButton btn = buildButton("\u26A0 No Incharge", false);
+                    btn.setFont(new Font("Georgia",Font.BOLD,11));
+                    btn.setForeground(new Color(255,160,60));
+                    btn.addActionListener(e -> {
+                        fireEditingStopped();
+                        // Look up club id from event id
+                        int evId = (Integer) tbl.getValueAt(row, 0);
+                        getClubIdForEvent(evId, (cId) ->
+                            showNoInchargeDialog(cName, cId));
+                    });
+                    return btn;
+                }
+
                 String btnText = done ? "Registered" : (eventPassed ? "Event Passed" : "Register");
                 JButton btn = buildButton(btnText, !done && !eventPassed);
                 btn.setFont(new Font("Georgia",Font.BOLD,11));
@@ -839,14 +1086,34 @@ public class StudentDashboard extends JFrame {
         loadClubEventsData(clubEventsModel);
     }
 
+    /** Async helper: fetch club_id for an event, then run callback on EDT */
+    private void getClubIdForEvent(int eventId, java.util.function.IntConsumer callback) {
+        new Thread(() -> {
+            try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+                PreparedStatement ps = con.prepareStatement(
+                    "SELECT club_id FROM event WHERE event_id=?");
+                ps.setInt(1, eventId);
+                ResultSet rs = ps.executeQuery();
+                int cId = rs.next() ? rs.getInt(1) : -1;
+                rs.close(); ps.close();
+                SwingUtilities.invokeLater(() -> callback.accept(cId));
+            } catch (SQLException ignored) {}
+        }).start();
+    }
+
     private void loadClubEventsData(DefaultTableModel model) {
         model.setRowCount(0);
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl,dbUser,dbPass)) {
+                // Include has_incharge in result
                 PreparedStatement ps = con.prepareStatement(
-                    "SELECT e.event_id,e.event_title,c.club_name,e.start_date,e.end_date," +
-                    "e.start_time,e.end_time," +
-                    "CASE WHEN r.user_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS is_reg " +
+                    "SELECT e.event_id, e.event_title, c.club_name, e.start_date, e.end_date," +
+                    "e.start_time, e.end_time," +
+                    "CASE WHEN r.user_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS is_reg, " +
+                    "CASE WHEN EXISTS (" +
+                    "  SELECT 1 FROM members_in si " +
+                    "  WHERE si.club_id=c.club_id AND si.role_type='staff_incharge'" +
+                    ") THEN 1 ELSE 0 END AS has_incharge " +
                     "FROM event e " +
                     "JOIN club c ON e.club_id=c.club_id " +
                     "LEFT JOIN registers r ON e.event_id=r.event_id AND r.user_id=? " +
@@ -855,14 +1122,15 @@ public class StudentDashboard extends JFrame {
                 ps.setInt(1, userId); ps.setInt(2, userId);
                 ResultSet rs = ps.executeQuery();
                 while (rs.next()) {
-                    Object[] row = {rs.getInt(1),rs.getString(2),rs.getString(3),
-                        rs.getDate(4),rs.getDate(5),rs.getString(6),rs.getString(7),
-                        rs.getString(8),rs.getString(8)};
+                    boolean hasIncharge = rs.getInt("has_incharge") == 1;
+                    Object[] row = {rs.getInt(1), rs.getString(2), rs.getString(3),
+                        rs.getDate(4), rs.getDate(5), rs.getString(6), rs.getString(7),
+                        rs.getString(8), hasIncharge, rs.getString(8)};
                     SwingUtilities.invokeLater(() -> model.addRow(row));
                 }
             } catch (SQLException ex) {
                 SwingUtilities.invokeLater(() -> model.addRow(
-                    new Object[]{"—","Error","—","—","—","—","—","—","—"}));
+                    new Object[]{"—","Error","—","—","—","—","—","—",false,"—"}));
             }
         }).start();
     }
@@ -870,6 +1138,20 @@ public class StudentDashboard extends JFrame {
     private void doRegisterEvent(int eventId, DefaultTableModel model, int row) {
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl,dbUser,dbPass)) {
+                // Check incharge for this event's club
+                PreparedStatement clubPs = con.prepareStatement(
+                    "SELECT club_id FROM event WHERE event_id=?");
+                clubPs.setInt(1, eventId);
+                ResultSet clubRs = clubPs.executeQuery();
+                int clubId = clubRs.next() ? clubRs.getInt(1) : -1;
+                clubRs.close(); clubPs.close();
+
+                if (clubId > 0 && !clubHasIncharge(con, clubId)) {
+                    String cName = getClubName(con, clubId);
+                    SwingUtilities.invokeLater(() -> showNoInchargeDialog(cName, clubId));
+                    return;
+                }
+
                 PreparedStatement ps = con.prepareStatement(
                     "INSERT INTO registers(user_id,event_id,reg_date,status) " +
                     "VALUES(?,?,SYSDATE,'Registered')");
@@ -877,7 +1159,7 @@ public class StudentDashboard extends JFrame {
                 ps.executeUpdate();
                 SwingUtilities.invokeLater(() -> {
                     model.setValueAt("Yes", row, 7);
-                    model.setValueAt("Yes", row, 8);
+                    model.setValueAt("Yes", row, 9);
                     JOptionPane.showMessageDialog(this,
                         "Registered successfully!", "Success",
                         JOptionPane.INFORMATION_MESSAGE);
@@ -1092,8 +1374,7 @@ public class StudentDashboard extends JFrame {
         table.getColumn("Status").setCellRenderer(new DefaultTableCellRenderer() {
             @Override public Component getTableCellRendererComponent(
                     JTable t,Object v,boolean sel,boolean foc,int row,int col) {
-                JLabel lbl = (JLabel) super.getTableCellRendererComponent(
-                    t,v,sel,foc,row,col);
+                JLabel lbl = (JLabel) super.getTableCellRendererComponent(t,v,sel,foc,row,col);
                 String s = v == null ? "" : v.toString();
                 if ("Present".equalsIgnoreCase(s)) {
                     lbl.setForeground(SUCCESS_COL); lbl.setText("\u2713  Present");
@@ -1119,16 +1400,14 @@ public class StudentDashboard extends JFrame {
         JScrollPane sp = styledTableScroll(table);
         sp.setBounds(24, tableY, W-48, H-tableY-24); pg.add(sp);
 
-        loadMyAttendanceData(myAttendanceModel,
-            myAttTotalCard, myAttPresentCard, myAttAbsentCard);
+        loadMyAttendanceData(myAttendanceModel, myAttTotalCard, myAttPresentCard, myAttAbsentCard);
 
         refreshBtn.addActionListener(e -> {
             myAttendanceModel.setRowCount(0);
             setStatCardValue(myAttTotalCard,   "—");
             setStatCardValue(myAttPresentCard, "—");
             setStatCardValue(myAttAbsentCard,  "—");
-            loadMyAttendanceData(myAttendanceModel,
-                myAttTotalCard, myAttPresentCard, myAttAbsentCard);
+            loadMyAttendanceData(myAttendanceModel, myAttTotalCard, myAttPresentCard, myAttAbsentCard);
         });
     }
 
@@ -1139,14 +1418,12 @@ public class StudentDashboard extends JFrame {
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl,dbUser,dbPass)) {
                 PreparedStatement ps = con.prepareStatement(
-                    "SELECT sa.attendance_date, se.event_title, se.event_type, " +
-                    "sa.attendance_status " +
+                    "SELECT sa.attendance_date, se.event_title, se.event_type, sa.attendance_status " +
                     "FROM student_attendance sa " +
                     "JOIN staff_event se ON sa.event_id = se.event_id " +
                     "WHERE sa.user_id = ? " +
                     "UNION ALL " +
-                    "SELECT sa.attendance_date, e.event_title, 'Club Event', " +
-                    "sa.attendance_status " +
+                    "SELECT sa.attendance_date, e.event_title, 'Club Event', sa.attendance_status " +
                     "FROM student_attendance sa " +
                     "JOIN event e ON sa.event_id = e.event_id " +
                     "WHERE sa.user_id = ? " +
@@ -1159,8 +1436,7 @@ public class StudentDashboard extends JFrame {
                     String status = rs.getString(4);
                     if ("Present".equalsIgnoreCase(status)) present++;
                     else if ("Absent".equalsIgnoreCase(status)) absent++;
-                    Object[] row = {rs.getDate(1),rs.getString(2),
-                        rs.getString(3),status};
+                    Object[] row = {rs.getDate(1),rs.getString(2),rs.getString(3),status};
                     SwingUtilities.invokeLater(() -> model.addRow(row));
                 }
                 final int fT=total, fP=present, fA=absent;
@@ -1213,8 +1489,7 @@ public class StudentDashboard extends JFrame {
 
         table.getColumn("Action").setCellRenderer(new TableCellRenderer() {
             @Override public Component getTableCellRendererComponent(
-                    JTable tbl, Object v, boolean sel,
-                    boolean foc, int row, int col) {
+                    JTable tbl, Object v, boolean sel, boolean foc, int row, int col) {
                 JButton btn = buildButton("\uD83C\uDF93 View", true);
                 btn.setFont(new Font("Georgia",Font.BOLD,12));
                 return btn;
@@ -1455,11 +1730,10 @@ public class StudentDashboard extends JFrame {
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  UI HELPERS
+    //  UI HELPERS  (unchanged from original)
     // ══════════════════════════════════════════════════════════════
     private void pageTitle(JPanel pg, String text, int W) {
-        JLabel t = makeLabel(text,
-            new Font("Georgia",Font.BOLD|Font.ITALIC,26), TEXT_PRIMARY);
+        JLabel t = makeLabel(text, new Font("Georgia",Font.BOLD|Font.ITALIC,26), TEXT_PRIMARY);
         t.setHorizontalAlignment(SwingConstants.LEFT);
         t.setBounds(24,18,W-220,36); pg.add(t);
         JSeparator s = buildSeparator();
@@ -1470,8 +1744,7 @@ public class StudentDashboard extends JFrame {
         JPanel c = new JPanel(null) {
             @Override protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D)g;
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                    RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setColor(CARD_BG);
                 g2.fillRoundRect(0,0,getWidth()-1,getHeight()-1,18,18);
                 g2.setColor(CARD_BORDER); g2.setStroke(new BasicStroke(1.5f));
@@ -1488,8 +1761,7 @@ public class StudentDashboard extends JFrame {
         JPanel c = new JPanel(null) {
             @Override protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D)g;
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                    RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setColor(new Color(130,60,255,28));
                 g2.fillRoundRect(0,0,getWidth()-1,getHeight()-1,14,14);
                 g2.setColor(CARD_BORDER); g2.setStroke(new BasicStroke(1.5f));
@@ -1511,13 +1783,11 @@ public class StudentDashboard extends JFrame {
         JPanel av = new JPanel() {
             @Override protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D)g;
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                    RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setPaint(new RadialGradientPaint(
                     getWidth()/2f, getHeight()/2f, getWidth()/2f,
                     new float[]{0f,1f},
-                    new Color[]{new Color(130,60,255,200),
-                                new Color(80,20,180,200)}));
+                    new Color[]{new Color(130,60,255,200), new Color(80,20,180,200)}));
                 g2.fillOval(0,0,getWidth()-1,getHeight()-1);
                 String init = name.isEmpty() ? "S" :
                     String.valueOf(name.charAt(0)).toUpperCase();
@@ -1536,8 +1806,7 @@ public class StudentDashboard extends JFrame {
         JLabel l = new JLabel(text, SwingConstants.CENTER) {
             @Override protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D)g;
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                    RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setPaint(new GradientPaint(0,0,new Color(130,60,255),
                     getWidth(),0,new Color(80,20,180)));
                 g2.fillRoundRect(0,0,getWidth()-1,getHeight()-1,10,10);
@@ -1552,8 +1821,7 @@ public class StudentDashboard extends JFrame {
         JButton btn = new JButton(text) {
             @Override protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D)g;
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                    RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 if (getClientProperty("active") == Boolean.TRUE) {
                     g2.setColor(SIDEBAR_ACT);
                     g2.fillRoundRect(0,0,getWidth(),getHeight(),10,10);
@@ -1594,8 +1862,7 @@ public class StudentDashboard extends JFrame {
         JButton btn = new JButton(text) {
             @Override protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D)g;
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-                    RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 if (primary) {
                     g2.setPaint(new GradientPaint(0,0,new Color(140,60,255),
                         getWidth(),getHeight(),new Color(90,20,200)));
@@ -1686,8 +1953,7 @@ public class StudentDashboard extends JFrame {
         t.getTableHeader().setBackground(new Color(25,12,55));
         t.getTableHeader().setForeground(ACCENT_LIGHT);
         t.getTableHeader().setFont(new Font("Georgia",Font.BOLD,13));
-        t.getTableHeader().setBorder(
-            BorderFactory.createLineBorder(CARD_BORDER,1));
+        t.getTableHeader().setBorder(BorderFactory.createLineBorder(CARD_BORDER,1));
         t.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
             @Override public Component getTableCellRendererComponent(
                     JTable tbl,Object v,boolean sel,boolean foc,int row,int col) {
@@ -1724,31 +1990,25 @@ public class StudentDashboard extends JFrame {
     private ImageIcon buildLogoIcon(int size) {
         BufferedImage img = new BufferedImage(size,size,BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = img.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
-            RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setColor(new Color(130,60,255,55)); g.fillOval(0,0,size,size);
         g.setColor(ACCENT); g.setStroke(new BasicStroke(size*0.04f));
-        g.drawOval((int)(size*0.03),(int)(size*0.03),
-            (int)(size*0.94),(int)(size*0.94));
+        g.drawOval((int)(size*0.03),(int)(size*0.03),(int)(size*0.94),(int)(size*0.94));
         g.setPaint(new RadialGradientPaint(size/2f,size/2f,size*0.42f,
             new float[]{0f,1f},
             new Color[]{new Color(160,80,255,120),new Color(0,0,0,0)}));
-        g.fillOval((int)(size*0.08),(int)(size*0.08),
-            (int)(size*0.84),(int)(size*0.84));
+        g.fillOval((int)(size*0.08),(int)(size*0.08),(int)(size*0.84),(int)(size*0.84));
         g.setColor(ACCENT_LIGHT);
         int s2=size/2, cap=(int)(size*0.26);
-        g.fillPolygon(
-            new int[]{s2,s2+cap,s2,s2-cap},
-            new int[]{(int)(size*0.28),(int)(size*0.40),
-                      (int)(size*0.52),(int)(size*0.40)},4);
+        g.fillPolygon(new int[]{s2,s2+cap,s2,s2-cap},
+            new int[]{(int)(size*0.28),(int)(size*0.40),(int)(size*0.52),(int)(size*0.40)},4);
         g.setColor(new Color(220,180,255));
         int tw=(int)(size*0.36), th=(int)(size*0.10);
         g.fillRoundRect(s2-tw/2,(int)(size*0.22),tw,th,6,6);
         g.setColor(GOLD); g.setStroke(new BasicStroke(size*0.025f));
         int tx = s2+tw/2-(int)(size*0.04);
         g.drawLine(tx,(int)(size*0.27),tx,(int)(size*0.52));
-        g.fillOval(tx-(int)(size*0.04),(int)(size*0.51),
-            (int)(size*0.08),(int)(size*0.08));
+        g.fillOval(tx-(int)(size*0.04),(int)(size*0.51),(int)(size*0.08),(int)(size*0.08));
         g.dispose(); return new ImageIcon(img);
     }
 }
