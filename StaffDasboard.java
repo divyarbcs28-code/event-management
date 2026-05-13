@@ -33,6 +33,7 @@ public class StaffDashboard extends JFrame {
     private static final Color CARD_BORDER  = new Color(130,  60, 255, 80);
     private static final Color SUCCESS_COL  = new Color( 80, 220, 120);
     private static final Color ERROR_COL    = new Color(255,  80,  80);
+    private static final Color WARN_COL     = new Color(255, 180,  60);
     private static final Color SIDEBAR_BG   = new Color(10,   5,  28, 240);
     private static final Color SIDEBAR_ACT  = new Color(130,  60, 255, 160);
 
@@ -50,10 +51,15 @@ public class StaffDashboard extends JFrame {
     private JPanel[] pages;
     private JButton[] sideItems;
 
+    private JLabel leaveRequestBadge;
+
     private String staffName="", staffEmail="", staffGender="", staffAddress="";
     private String staffDOB="", staffAge="0", staffDesignation="", deptName="";
 
     private javax.swing.Timer autoRefreshTimer;
+
+    private static final int INCHARGE_PAGE_COUNT    = 10;
+    private static final int NON_INCHARGE_PAGE_COUNT = 7;
 
     public StaffDashboard(int userId, String userName,
                           String dbUrl, String dbUser, String dbPass) {
@@ -99,7 +105,7 @@ public class StaffDashboard extends JFrame {
         contentArea.setBounds(SIDEBAR_W_PX,TOP_H,cW,cH);
         rootLayer.add(contentArea);
 
-        int pageCount = isIncharge ? 9 : 7;
+        int pageCount = isIncharge ? INCHARGE_PAGE_COUNT : NON_INCHARGE_PAGE_COUNT;
         pages=new JPanel[pageCount];
         for (int i=0;i<pageCount;i++){
             pages[i]=new JPanel(null); pages[i].setOpaque(false);
@@ -118,6 +124,7 @@ public class StaffDashboard extends JFrame {
                 buildParticipantsPage(scr);
                 buildAttendancePage(scr);
                 buildCertificatesPage(scr);
+                buildLeaveRequestsPage(scr);
             } else {
                 buildParticipantsPage(scr);
                 buildAttendancePage(scr);
@@ -132,21 +139,56 @@ public class StaffDashboard extends JFrame {
     }
 
     // ══════════════════════════════════════════════════════════════
+    //  SCROLLABLE PAGE HELPER
+    // ══════════════════════════════════════════════════════════════
+    /**
+     * Clears the page panel, wraps it in a JScrollPane, and returns
+     * the inner content panel so all components can be added to it.
+     * The page itself stays fixed; only the content scrolls.
+     */
+    private JPanel createScrollablePage(JPanel pg, int W, int H) {
+        pg.removeAll();
+        JPanel content = new JPanel(null);
+        content.setOpaque(false);
+        JScrollPane sp = styledScroll(content);
+        sp.setBounds(0, 0, W, H);
+        pg.add(sp);
+        return content;
+    }
+
+    // ══════════════════════════════════════════════════════════════
     //  AUTO-REFRESH
     // ══════════════════════════════════════════════════════════════
     private void startAutoRefresh(){
         autoRefreshTimer = new javax.swing.Timer(10000, e -> {
+            if (curPage == 0) refreshOverviewPage();
             if (curPage == 1) refreshMyClubsPage();
             if (curPage == 2) refreshManagedEventsPage();
-            int attendanceIdx = isIncharge ? 6 : 4;
-            if (curPage == attendanceIdx) refreshAttendancePage();
+            int participantsIdx = isIncharge ? 5 : 3;
+            int attendanceIdx   = isIncharge ? 6 : 4;
+            int certIdx         = isIncharge ? 7 : 5;
+            int myAttIdx        = isIncharge ? -1 : 6;
+            if (curPage == participantsIdx) refreshParticipantsPage();
+            if (curPage == attendanceIdx)   refreshAttendancePage();
+            if (curPage == certIdx)         refreshCertificatesPage();
+            if (!isIncharge && curPage == myAttIdx) refreshMyAttendancePage();
+            if (isIncharge && curPage == 8) refreshLeaveRequestsPage();
         });
         autoRefreshTimer.start();
+
+        if (isIncharge) {
+            new javax.swing.Timer(20000, e -> updateLeaveRequestBadge()).start();
+        }
     }
 
+    private void refreshOverviewPage()      { buildOverviewPage(Toolkit.getDefaultToolkit().getScreenSize()); }
     private void refreshMyClubsPage()       { buildMyClubsPage(Toolkit.getDefaultToolkit().getScreenSize()); }
     private void refreshManagedEventsPage() { buildManagedEventsPage(Toolkit.getDefaultToolkit().getScreenSize()); }
+    private void refreshParticipantsPage()  { buildParticipantsPage(Toolkit.getDefaultToolkit().getScreenSize()); }
     private void refreshAttendancePage()    { buildAttendancePage(Toolkit.getDefaultToolkit().getScreenSize()); }
+    private void refreshCertificatesPage()  { buildCertificatesPage(Toolkit.getDefaultToolkit().getScreenSize()); }
+    private void refreshMyAttendancePage()  { buildMyAttendancePage(Toolkit.getDefaultToolkit().getScreenSize()); }
+    private void refreshLeaveRequestsPage() { buildLeaveRequestsPage(Toolkit.getDefaultToolkit().getScreenSize()); }
 
     // ══════════════════════════════════════════════════════════════
     //  TOP BAR
@@ -219,6 +261,7 @@ public class StaffDashboard extends JFrame {
                 {"\uD83D\uDC65","Participants"},
                 {"\u270D","Mark Attendance"},
                 {"\uD83C\uDFAB","Certificates"},
+                {"\uD83D\uDCEC","Leave Requests"},
               }
             : new String[][]{
                 {"\uD83C\uDFE0","Overview"},
@@ -237,9 +280,54 @@ public class StaffDashboard extends JFrame {
             sideItems[i]=sidebarButton(menu[i][0]+" "+menu[i][1],i==0);
             sideItems[i].setBounds(12,my,SIDEBAR_W_PX-24,40);
             sideItems[i].addActionListener(e->navigateTo(idx));
-            sidebar.add(sideItems[i]); my+=46;
+            sidebar.add(sideItems[i]);
+
+            if (isIncharge && i == 8) {
+                leaveRequestBadge = new JLabel("") {
+                    @Override protected void paintComponent(Graphics g) {
+                        if (getText().isEmpty()) return;
+                        Graphics2D g2 = (Graphics2D)g;
+                        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                        g2.setColor(new Color(255, 60, 60));
+                        g2.fillOval(0, 0, getWidth()-1, getHeight()-1);
+                        g2.setColor(Color.WHITE);
+                        g2.setFont(new Font("SansSerif", Font.BOLD, 10));
+                        FontMetrics fm = g2.getFontMetrics();
+                        String t = getText();
+                        g2.drawString(t, getWidth()/2 - fm.stringWidth(t)/2,
+                            getHeight()/2 + fm.getAscent()/2 - 2);
+                    }
+                };
+                leaveRequestBadge.setOpaque(false);
+                leaveRequestBadge.setBounds(SIDEBAR_W_PX - 34, my + 10, 18, 18);
+                sidebar.add(leaveRequestBadge);
+                updateLeaveRequestBadge();
+            }
+
+            my+=46;
         }
         rootLayer.add(sidebar);
+    }
+
+    private void updateLeaveRequestBadge() {
+        if (!isIncharge || leaveRequestBadge == null) return;
+        new Thread(() -> {
+            try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+                PreparedStatement ps = con.prepareStatement(
+                    "SELECT COUNT(*) FROM club_leave_request clr " +
+                    "JOIN club c ON clr.club_id = c.club_id " +
+                    "JOIN members_in mi ON c.club_id = mi.club_id " +
+                    "WHERE mi.user_id = ? AND mi.role_type = 'staff_incharge' " +
+                    "AND clr.status = 'Pending'");
+                ps.setInt(1, userId);
+                ResultSet rs = ps.executeQuery();
+                int count = rs.next() ? rs.getInt(1) : 0;
+                SwingUtilities.invokeLater(() -> {
+                    leaveRequestBadge.setText(count > 0 ? String.valueOf(count) : "");
+                    leaveRequestBadge.repaint();
+                });
+            } catch (SQLException ignored) {}
+        }).start();
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -292,63 +380,70 @@ public class StaffDashboard extends JFrame {
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  PAGE 0 — OVERVIEW
+    //  PAGE 0 — OVERVIEW  (already had its own scroll; kept as-is)
     // ══════════════════════════════════════════════════════════════
     private void buildOverviewPage(Dimension scr) {
         JPanel pg=pages[0]; int W=scr.width-SIDEBAR_W_PX, H=scr.height-TOP_H, cx=W/2;
         pg.removeAll();
+
+        // ── Refresh button (lives on pg so it's always visible) ──
+        JButton refreshBtn=buildButton("↻ Refresh",false);
+        refreshBtn.setBounds(W-130,18,110,32);
+        refreshBtn.addActionListener(e->refreshOverviewPage());
+        pg.add(refreshBtn);
+
         JPanel content=new JPanel(null); content.setOpaque(false);
-        content.setPreferredSize(new Dimension(W,900));
+        content.setPreferredSize(new Dimension(W,920));
         JScrollPane sc=styledScroll(content); sc.setBounds(0,0,W,H); pg.add(sc);
 
         JLabel ttl=makeLabel("Staff Overview",new Font("Georgia",Font.BOLD|Font.ITALIC,28),TEXT_PRIMARY);
-        ttl.setHorizontalAlignment(SwingConstants.CENTER); ttl.setBounds(0,24,W,38); content.add(ttl);
-        JSeparator sep=buildSeparator(); sep.setBounds(cx-W/5,68,W/5*2,2); content.add(sep);
+        ttl.setHorizontalAlignment(SwingConstants.CENTER); ttl.setBounds(0,16,W,38); content.add(ttl);
+        JSeparator sep=buildSeparator(); sep.setBounds(cx-W/5,58,W/5*2,2); content.add(sep);
 
         if (!isIncharge) {
             JPanel roleBanner = glassCard();
-            roleBanner.setBounds(36, 80, W-72, 40); content.add(roleBanner);
+            roleBanner.setBounds(36, 68, W-72, 36); content.add(roleBanner);
             JLabel roleMsg = makeLabel(
                 "ℹ  You are a General Staff Member — you can mark attendance, issue certificates and view events, but cannot create events.",
                 new Font("SansSerif", Font.PLAIN, 12), new Color(255, 220, 100));
-            roleMsg.setBounds(14, 10, W-100, 20); roleBanner.add(roleMsg);
+            roleMsg.setBounds(14, 8, W-100, 20); roleBanner.add(roleMsg);
         }
 
-        int profileTopY = isIncharge ? 88 : 132;
-        int pcW=340,pcH=380,pcX=36,pcY=profileTopY;
+        int profileTopY = isIncharge ? 72 : 115;
+        int pcW=300,pcH=340,pcX=28,pcY=profileTopY;
         JPanel pc=glassCard(); pc.setBounds(pcX,pcY,pcW,pcH); content.add(pc);
-        JPanel av=avatarPanel(staffName,72); av.setBounds(pcW/2-36,20,72,72); pc.add(av);
-        JLabel nm=makeLabel(staffName,new Font("Georgia",Font.BOLD,17),TEXT_PRIMARY);
-        nm.setHorizontalAlignment(SwingConstants.CENTER); nm.setBounds(0,100,pcW,24); pc.add(nm);
+        JPanel av=avatarPanel(staffName,60); av.setBounds(pcW/2-30,16,60,60); pc.add(av);
+        JLabel nm=makeLabel(staffName,new Font("Georgia",Font.BOLD,15),TEXT_PRIMARY);
+        nm.setHorizontalAlignment(SwingConstants.CENTER); nm.setBounds(0,82,pcW,22); pc.add(nm);
         JLabel rb=roleBadge(staffDesignation.isEmpty()?"Staff":staffDesignation);
-        rb.setBounds(pcW/2-60,128,120,22); pc.add(rb);
+        rb.setBounds(pcW/2-55,108,110,20); pc.add(rb);
         String[][] rows={{"\uD83D\uDCE7",staffEmail},{"\u2640\u2642",staffGender},
             {"\uD83D\uDCC5","DOB: "+staffDOB+"  (Age "+staffAge+")"},
             {"\uD83C\uDFEB","Dept: "+deptName},{"\uD83D\uDCCD",staffAddress.isEmpty()?"—":staffAddress}};
-        int ry=162;
+        int ry=136;
         for (String[] r:rows){
-            JLabel ic=new JLabel(r[0]); ic.setFont(new Font("Segoe UI Emoji",Font.PLAIN,13));
-            ic.setBounds(18,ry,26,20); pc.add(ic);
-            JLabel vl=makeLabel(r[1],new Font("SansSerif",Font.PLAIN,13),TEXT_MUTED);
-            vl.setBounds(48,ry,pcW-60,20); pc.add(vl); ry+=30;
+            JLabel ic=new JLabel(r[0]); ic.setFont(new Font("Segoe UI Emoji",Font.PLAIN,12));
+            ic.setBounds(14,ry,24,18); pc.add(ic);
+            JLabel vl=makeLabel(r[1],new Font("SansSerif",Font.PLAIN,12),TEXT_MUTED);
+            vl.setBounds(42,ry,pcW-54,18); pc.add(vl); ry+=26;
         }
 
-        int dlX=pcX+pcW+28, dlY=pcY, dlW=(W-dlX-32)/2, dlH=120;
+        int dlX=pcX+pcW+20, dlY=pcY, dlW=(W-dlX-24)/2, dlH=100;
         JPanel dlCard=glassCard(); dlCard.setBounds(dlX,dlY,dlW,dlH); content.add(dlCard);
-        JLabel dlTtl=makeLabel("⏰ Attendance Deadline",new Font("Georgia",Font.BOLD,14),GOLD);
-        dlTtl.setBounds(14,10,dlW-28,20); dlCard.add(dlTtl);
-        JLabel dlVal=makeLabel("Ends in: — (Check events)",new Font("SansSerif",Font.PLAIN,12),TEXT_MUTED);
-        dlVal.setBounds(14,36,dlW-28,60); dlCard.add(dlVal);
+        JLabel dlTtl=makeLabel("⏰ Attendance Deadline",new Font("Georgia",Font.BOLD,13),GOLD);
+        dlTtl.setBounds(12,8,dlW-24,18); dlCard.add(dlTtl);
+        JLabel dlVal=makeLabel("Ends in: — (Check events)",new Font("SansSerif",Font.PLAIN,11),TEXT_MUTED);
+        dlVal.setBounds(12,30,dlW-24,56); dlCard.add(dlVal);
         loadAttendanceDeadline(dlVal);
 
         JPanel certCard=glassCard(); certCard.setBounds(dlX+dlW+8,dlY,dlW,dlH); content.add(certCard);
-        JLabel certTtl=makeLabel("📜 Certificate Deadline",new Font("Georgia",Font.BOLD,14),ACCENT_LIGHT);
-        certTtl.setBounds(14,10,dlW-28,20); certCard.add(certTtl);
-        JLabel certVal=makeLabel("Ends in: — (Check events)",new Font("SansSerif",Font.PLAIN,12),TEXT_MUTED);
-        certVal.setBounds(14,36,dlW-28,60); certCard.add(certVal);
+        JLabel certTtl=makeLabel("📜 Certificate Deadline",new Font("Georgia",Font.BOLD,13),ACCENT_LIGHT);
+        certTtl.setBounds(12,8,dlW-24,18); certCard.add(certTtl);
+        JLabel certVal=makeLabel("Ends in: — (Check events)",new Font("SansSerif",Font.PLAIN,11),TEXT_MUTED);
+        certVal.setBounds(12,30,dlW-24,56); certCard.add(certVal);
         loadCertificateDeadline(certVal);
 
-        int scX=dlX, scY=dlY+dlH+16, scW=(W-scX-32)/3, scH=120, scGap=14;
+        int scX=dlX, scY=dlY+dlH+12, scW=(W-scX-24)/3, scH=100, scGap=12;
 
         String[][] stats = isIncharge
             ? new String[][]{
@@ -367,7 +462,22 @@ public class StaffDashboard extends JFrame {
             st.setBounds(scX+i*(scW+scGap),scY,scW,scH); content.add(st);
             loadStatCount(stats[i][2],st);
         }
+
+        if (isIncharge) {
+            JPanel lrCard = glassCard();
+            lrCard.setBounds(scX, scY + scH + 12, W - scX - 24, 60); content.add(lrCard);
+            JLabel lrIcon = makeLabel("📨", new Font("Segoe UI Emoji", Font.PLAIN, 18), WARN_COL);
+            lrIcon.setBounds(12, 16, 28, 28); lrCard.add(lrIcon);
+            JLabel lrTxt = makeLabel("Pending leave requests from students — click 'Leave Requests' in the sidebar to review.",
+                new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+            lrTxt.setBounds(48, 18, W - scX - 110, 24); lrCard.add(lrTxt);
+            JButton lrBtn = buildButton("Go to Leave Requests →", true);
+            lrBtn.setBounds(W - scX - 220, 13, 194, 32); lrCard.add(lrBtn);
+            lrBtn.addActionListener(e -> navigateTo(8));
+        }
+
         content.revalidate(); content.repaint();
+        pg.revalidate(); pg.repaint();
     }
 
     private void loadAttendanceDeadline(JLabel lbl){
@@ -406,32 +516,47 @@ public class StaffDashboard extends JFrame {
     //  PAGE 1 — MY CLUBS
     // ══════════════════════════════════════════════════════════════
     private void buildMyClubsPage(Dimension scr) {
-        JPanel pg=pages[1]; int W=scr.width-SIDEBAR_W_PX, H=scr.height-TOP_H;
-        pg.removeAll();
-        pageTitle(pg,"My Clubs",W);
+        JPanel pg = pages[1];
+        int W = scr.width - SIDEBAR_W_PX, H = scr.height - TOP_H;
+        JPanel content = createScrollablePage(pg, W, H);
 
-        JButton refreshBtn=buildButton("↻ Refresh",false);
-        refreshBtn.setBounds(W-130,18,110,32);
-        refreshBtn.addActionListener(e->refreshMyClubsPage());
-        pg.add(refreshBtn);
+        pageTitle(content, "My Clubs", W);
 
-        String[] c1={"Club ID","Club Name","Created Date","Total Members","My Role"};
-        DefaultTableModel m1=noEditModel(c1); JTable t1=new JTable(m1); styleTable(t1);
-        String[] c2={"Club","Member Name","Reg No","Year","Section","User Type","Role"};
-        DefaultTableModel m2=noEditModel(c2); JTable t2=new JTable(m2); styleTable(t2);
+        JButton refreshBtn = buildButton("↻ Refresh", false);
+        refreshBtn.setBounds(W-130, 18, 110, 32);
+        refreshBtn.addActionListener(e -> refreshMyClubsPage());
+        content.add(refreshBtn);
 
-        int half=(H-170)/2;
-        pg.add(spAt(styledTableScroll(t1),24,72,W-48,half));
-        pg.add(lblAt(makeLabel("Club Members (where I'm involved)",new Font("Georgia",Font.BOLD|Font.ITALIC,14),ACCENT_LIGHT),24,72+half+8,W-48,20));
-        pg.add(spAt(styledTableScroll(t2),24,72+half+32,W-48,half-10));
+        String[] c1 = {"Club ID","Club Name","Created Date","Total Members","My Role"};
+        DefaultTableModel m1 = noEditModel(c1);
+        JTable t1 = new JTable(m1);
+        styleTable(t1);
+
+        String[] c2 = {"Club","Member Name","Reg No","Year","Section","User Type","Role"};
+        DefaultTableModel m2 = noEditModel(c2);
+        JTable t2 = new JTable(m2);
+        styleTable(t2);
+
+        int tableH = 300;
+        int memberLblY = 72 + tableH + 12;
+        int memberTblY = memberLblY + 26;
+        int totalH     = memberTblY + tableH + 20;
+
+        content.add(spAt(styledTableScroll(t1), 24, 72, W-48, tableH));
+        content.add(lblAt(makeLabel("Club Members (where I'm involved)",
+            new Font("Georgia", Font.BOLD|Font.ITALIC, 14), ACCENT_LIGHT),
+            24, memberLblY, W-48, 20));
+        content.add(spAt(styledTableScroll(t2), 24, memberTblY, W-48, tableH));
+
+        content.setPreferredSize(new Dimension(W, totalH));
 
         t1.addMouseListener(new MouseAdapter(){
             @Override public void mouseClicked(MouseEvent e){
-                int row=t1.rowAtPoint(e.getPoint());
-                if (row>=0){
-                    t1.setRowSelectionInterval(row,row);
-                    int clubId=(int)m1.getValueAt(row,0);
-                    loadClubMembers(clubId,m2);
+                int row = t1.rowAtPoint(e.getPoint());
+                if (row >= 0){
+                    t1.setRowSelectionInterval(row, row);
+                    int clubId = (int) m1.getValueAt(row, 0);
+                    loadClubMembers(clubId, m2);
                 }
             }
         });
@@ -447,10 +572,13 @@ public class StaffDashboard extends JFrame {
                     "GROUP BY c.club_id,c.club_name,c.created_date ORDER BY c.club_name");
                 p1.setInt(1,userId); p1.setInt(2,userId);
                 ResultSet r1=p1.executeQuery();
-                while (r1.next()){ Object[] row={r1.getInt(1),r1.getString(2),r1.getDate(3),r1.getInt(4),r1.getString(5)};
-                    SwingUtilities.invokeLater(()->m1.addRow(row)); }
-            } catch (SQLException ex){ SwingUtilities.invokeLater(()->
-                m1.addRow(new Object[]{"—","Error","—","—","—"})); }
+                while (r1.next()){
+                    Object[] row={r1.getInt(1),r1.getString(2),r1.getDate(3),r1.getInt(4),r1.getString(5)};
+                    SwingUtilities.invokeLater(()->m1.addRow(row));
+                }
+            } catch (SQLException ex){
+                SwingUtilities.invokeLater(()->m1.addRow(new Object[]{"—","Error","—","—","—"}));
+            }
         }).start();
     }
 
@@ -465,9 +593,11 @@ public class StaffDashboard extends JFrame {
                     "WHERE c.club_id=? ORDER BY u.name");
                 p2.setInt(1,clubId); ResultSet r2=p2.executeQuery();
                 SwingUtilities.invokeLater(()->model.setRowCount(0));
-                while (r2.next()){ Object[] row={r2.getString(1),r2.getString(2),r2.getString(3),
-                    r2.getString(4),r2.getString(5),r2.getString(6),r2.getString(7)};
-                    SwingUtilities.invokeLater(()->model.addRow(row)); }
+                while (r2.next()){
+                    Object[] row={r2.getString(1),r2.getString(2),r2.getString(3),
+                        r2.getString(4),r2.getString(5),r2.getString(6),r2.getString(7)};
+                    SwingUtilities.invokeLater(()->model.addRow(row));
+                }
             } catch (SQLException ex){}
         }).start();
     }
@@ -476,29 +606,39 @@ public class StaffDashboard extends JFrame {
     //  PAGE 2 — MANAGED EVENTS
     // ══════════════════════════════════════════════════════════════
     private void buildManagedEventsPage(Dimension scr) {
-        JPanel pg=pages[2]; int W=scr.width-SIDEBAR_W_PX, H=scr.height-TOP_H;
-        pg.removeAll();
-        pageTitle(pg, isIncharge ? "Managed Events" : "My Events", W);
+        JPanel pg = pages[2];
+        int W = scr.width - SIDEBAR_W_PX, H = scr.height - TOP_H;
+        JPanel content = createScrollablePage(pg, W, H);
+
+        pageTitle(content, isIncharge ? "Managed Events" : "My Events", W);
 
         if (!isIncharge) {
-            JPanel infoBanner = glassCard(); infoBanner.setBounds(24, 66, W-48, 36); pg.add(infoBanner);
+            JPanel infoBanner = glassCard();
+            infoBanner.setBounds(24, 66, W-48, 36);
+            content.add(infoBanner);
             JLabel infoMsg = makeLabel(
                 "ℹ  Showing staff events you are registered for, and club events where you are the club incharge.",
                 new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
-            infoMsg.setBounds(14, 9, W-76, 18); infoBanner.add(infoMsg);
+            infoMsg.setBounds(14, 9, W-76, 18);
+            infoBanner.add(infoMsg);
         }
 
-        JButton refreshBtn=buildButton("↻ Refresh",false);
-        refreshBtn.setBounds(W-130,18,110,32);
-        refreshBtn.addActionListener(e->refreshManagedEventsPage());
-        pg.add(refreshBtn);
+        JButton refreshBtn = buildButton("↻ Refresh", false);
+        refreshBtn.setBounds(W-130, 18, 110, 32);
+        refreshBtn.addActionListener(e -> refreshManagedEventsPage());
+        content.add(refreshBtn);
 
-        String[] cols={"Event ID","Title","Type","Club/Organiser","Start Date","End Date","Status","Registrations"};
-        DefaultTableModel model=noEditModel(cols); JTable table=new JTable(model); styleTable(table);
+        String[] cols = {"Event ID","Title","Type","Club/Organiser","Start Date","End Date","Status","Registrations"};
+        DefaultTableModel model = noEditModel(cols);
+        JTable table = new JTable(model);
+        styleTable(table);
 
         int tableY = isIncharge ? 72 : 112;
-        int tableH = isIncharge ? H-100 : H-140;
-        pg.add(spAt(styledTableScroll(table),24,tableY,W-48,tableH));
+        int tableH = 500;
+        int totalH = tableY + tableH + 20;
+
+        content.add(spAt(styledTableScroll(table), 24, tableY, W-48, tableH));
+        content.setPreferredSize(new Dimension(W, totalH));
 
         new Thread(()->{
             try (Connection con=DriverManager.getConnection(dbUrl,dbUser,dbPass)){
@@ -511,10 +651,11 @@ public class StaffDashboard extends JFrame {
                         "FROM event_incharge ei JOIN event e ON ei.event_id=e.event_id "+
                         "JOIN club c ON e.club_id=c.club_id WHERE ei.user_id=? ORDER BY e.start_date DESC");
                     ps.setInt(1,userId); ResultSet rs=ps.executeQuery();
-                    while (rs.next()){ Object[] row={rs.getInt(1),rs.getString(2),rs.getString(3),
-                        rs.getString(4),rs.getDate(5),rs.getDate(6),rs.getString(7),rs.getInt(8)};
-                        SwingUtilities.invokeLater(()->model.addRow(row)); }
-
+                    while (rs.next()){
+                        Object[] row={rs.getInt(1),rs.getString(2),rs.getString(3),
+                            rs.getString(4),rs.getDate(5),rs.getDate(6),rs.getString(7),rs.getInt(8)};
+                        SwingUtilities.invokeLater(()->model.addRow(row));
+                    }
                     PreparedStatement ps2=con.prepareStatement(
                         "SELECT se.event_id,se.event_title,se.event_type,'Staff Organised',"+
                         "se.start_date,se.end_date,"+
@@ -522,9 +663,11 @@ public class StaffDashboard extends JFrame {
                         "(SELECT COUNT(*) FROM staff_event_registration ser WHERE ser.event_id=se.event_id) "+
                         "FROM staff_event se WHERE se.organiser_id=? ORDER BY se.start_date DESC");
                     ps2.setInt(1,userId); ResultSet rs2=ps2.executeQuery();
-                    while (rs2.next()){ Object[] row={rs2.getInt(1),rs2.getString(2),rs2.getString(3),
-                        rs2.getString(4),rs2.getDate(5),rs2.getDate(6),rs2.getString(7),rs2.getInt(8)};
-                        SwingUtilities.invokeLater(()->model.addRow(row)); }
+                    while (rs2.next()){
+                        Object[] row={rs2.getInt(1),rs2.getString(2),rs2.getString(3),
+                            rs2.getString(4),rs2.getDate(5),rs2.getDate(6),rs2.getString(7),rs2.getInt(8)};
+                        SwingUtilities.invokeLater(()->model.addRow(row));
+                    }
                 } else {
                     PreparedStatement ps2=con.prepareStatement(
                         "SELECT se.event_id,se.event_title,se.event_type,'Staff Organised',"+
@@ -537,10 +680,11 @@ public class StaffDashboard extends JFrame {
                         "ORDER BY se.start_date DESC");
                     ps2.setInt(1,userId); ps2.setInt(2,userId);
                     ResultSet rs2=ps2.executeQuery();
-                    while (rs2.next()){ Object[] row={rs2.getInt(1),rs2.getString(2),rs2.getString(3),
-                        rs2.getString(4),rs2.getDate(5),rs2.getDate(6),rs2.getString(7),rs2.getInt(8)};
-                        SwingUtilities.invokeLater(()->model.addRow(row)); }
-
+                    while (rs2.next()){
+                        Object[] row={rs2.getInt(1),rs2.getString(2),rs2.getString(3),
+                            rs2.getString(4),rs2.getDate(5),rs2.getDate(6),rs2.getString(7),rs2.getInt(8)};
+                        SwingUtilities.invokeLater(()->model.addRow(row));
+                    }
                     PreparedStatement ps3=con.prepareStatement(
                         "SELECT e.event_id,e.event_title,'Club Event' AS etype,c.club_name,"+
                         "e.start_date,e.end_date,"+
@@ -550,12 +694,17 @@ public class StaffDashboard extends JFrame {
                         "WHERE c.club_id IN (SELECT club_id FROM members_in WHERE user_id=? AND role_type='staff_incharge') "+
                         "ORDER BY e.start_date DESC");
                     ps3.setInt(1,userId); ResultSet rs3=ps3.executeQuery();
-                    while (rs3.next()){ Object[] row={rs3.getInt(1),rs3.getString(2),rs3.getString(3),
-                        rs3.getString(4),rs3.getDate(5),rs3.getDate(6),rs3.getString(7),rs3.getInt(8)};
-                        SwingUtilities.invokeLater(()->model.addRow(row)); }
+                    while (rs3.next()){
+                        Object[] row={rs3.getInt(1),rs3.getString(2),rs3.getString(3),
+                            rs3.getString(4),rs3.getDate(5),rs3.getDate(6),rs3.getString(7),rs3.getInt(8)};
+                        SwingUtilities.invokeLater(()->model.addRow(row));
+                    }
                 }
-            } catch (SQLException ex){ SwingUtilities.invokeLater(()->
-                model.addRow(new Object[]{"—","Error: "+ex.getMessage().substring(0,Math.min(40,ex.getMessage().length())),"—","—","—","—","—","—"})); }
+            } catch (SQLException ex){
+                SwingUtilities.invokeLater(()->model.addRow(new Object[]{
+                    "—","Error: "+ex.getMessage().substring(0,Math.min(40,ex.getMessage().length())),
+                    "—","—","—","—","—","—"}));
+            }
         }).start();
     }
 
@@ -563,38 +712,44 @@ public class StaffDashboard extends JFrame {
     //  PAGE 3 (INCHARGE) — CREATE CLUB EVENT
     // ══════════════════════════════════════════════════════════════
     private void buildCreateClubEventPage(Dimension scr) {
-        JPanel pg=pages[3]; int W=scr.width-SIDEBAR_W_PX, cx=W/2;
-        pg.removeAll();
-        pageTitle(pg,"Create Club Event",W);
+        JPanel pg = pages[3];
+        int W = scr.width - SIDEBAR_W_PX, H = scr.height - TOP_H;
+        int cx = W / 2;
+        JPanel content = createScrollablePage(pg, W, H);
 
-        int cw=540, ch=480, cardX=cx-cw/2, cardY=70;
-        JPanel card=glassCard(); card.setBounds(cardX,cardY,cw,ch); pg.add(card);
+        pageTitle(content, "Create Club Event", W);
 
-        int fx=36, fw=cw-72, fy=24;
-        card.add(fldLbl("Event Title (max 50 chars)",fx,fy,fw)); fy+=18;
-        JTextField f1=styledField(); f1.setBounds(fx,fy,fw,40); card.add(f1); fy+=52;
+        int cw = 540, ch = 440, cardX = cx - cw/2, cardY = 66;
+        JPanel card = glassCard();
+        card.setBounds(cardX, cardY, cw, ch);
+        content.add(card);
+        content.setPreferredSize(new Dimension(W, cardY + ch + 24));
 
-        card.add(fldLbl("Select Club (only where you are staff_incharge)",fx,fy,fw)); fy+=18;
+        int fx=36, fw=cw-72, fy=20;
+        card.add(fldLbl("Event Title (max 50 chars)",fx,fy,fw)); fy+=16;
+        JTextField f1=styledField(); f1.setBounds(fx,fy,fw,36); card.add(f1); fy+=46;
+
+        card.add(fldLbl("Select Club (only where you are staff_incharge)",fx,fy,fw)); fy+=16;
         JComboBox<String> clubCombo=styledCombo(new String[]{"-- Loading clubs --"});
-        clubCombo.setBounds(fx,fy,fw,40); card.add(clubCombo); fy+=52;
+        clubCombo.setBounds(fx,fy,fw,36); card.add(clubCombo); fy+=46;
         loadStaffInchargeClubsCombo(clubCombo);
 
         card.add(fldLbl("Start Date (YYYY-MM-DD)",fx,fy,fw/2-8));
-        card.add(fldLbl("End Date",fx+fw/2+8,fy,fw/2-8)); fy+=18;
-        JTextField f3=styledField(); f3.setBounds(fx,fy,fw/2-8,40); card.add(f3);
-        JTextField f4=styledField(); f4.setBounds(fx+fw/2+8,fy,fw/2-8,40); card.add(f4); fy+=52;
+        card.add(fldLbl("End Date",fx+fw/2+8,fy,fw/2-8)); fy+=16;
+        JTextField f3=styledField(); f3.setBounds(fx,fy,fw/2-8,36); card.add(f3);
+        JTextField f4=styledField(); f4.setBounds(fx+fw/2+8,fy,fw/2-8,36); card.add(f4); fy+=46;
 
         card.add(fldLbl("Start Time (HH:MM)",fx,fy,fw/2-8));
-        card.add(fldLbl("End Time",fx+fw/2+8,fy,fw/2-8)); fy+=18;
-        JTextField f5=styledField(); f5.setBounds(fx,fy,fw/2-8,40); card.add(f5);
-        JTextField f6=styledField(); f6.setBounds(fx+fw/2+8,fy,fw/2-8,40); card.add(f6); fy+=52;
+        card.add(fldLbl("End Time",fx+fw/2+8,fy,fw/2-8)); fy+=16;
+        JTextField f5=styledField(); f5.setBounds(fx,fy,fw/2-8,36); card.add(f5);
+        JTextField f6=styledField(); f6.setBounds(fx+fw/2+8,fy,fw/2-8,36); card.add(f6); fy+=46;
 
         JLabel statusLbl=makeLabel("",new Font("SansSerif",Font.BOLD,12),ERROR_COL);
         statusLbl.setHorizontalAlignment(SwingConstants.CENTER);
-        statusLbl.setBounds(0,fy,cw,20); card.add(statusLbl);
+        statusLbl.setBounds(0,fy,cw,18); card.add(statusLbl);
 
         JButton btn=buildButton("Create Club Event",true);
-        btn.setBounds(fx,fy+28,fw,46); card.add(btn);
+        btn.setBounds(fx,fy+24,fw,40); card.add(btn);
 
         btn.addActionListener(e->{
             String title=f1.getText().trim();
@@ -615,54 +770,63 @@ public class StaffDashboard extends JFrame {
     //  PAGE 4 (INCHARGE) — CREATE STAFF EVENT
     // ══════════════════════════════════════════════════════════════
     private void buildCreateStaffEventPage(Dimension scr) {
-        JPanel pg=pages[4]; int W=scr.width-SIDEBAR_W_PX, cx=W/2;
-        pg.removeAll();
-        pageTitle(pg,"Create Staff Event",W);
+        JPanel pg = pages[4];
+        int W = scr.width - SIDEBAR_W_PX, H = scr.height - TOP_H;
+        int cx = W / 2;
+        JPanel content = createScrollablePage(pg, W, H);
 
-        JPanel banner=glassCard(); banner.setBounds(24,66,W-48,44); pg.add(banner);
-        JLabel bannerLbl=makeLabel(
+        pageTitle(content, "Create Staff Event", W);
+
+        JPanel banner = glassCard();
+        banner.setBounds(24, 62, W-48, 36);
+        content.add(banner);
+        JLabel bannerLbl = makeLabel(
             "Organise institution-level events. Both internal students and external guests can register.",
-            new Font("SansSerif",Font.PLAIN,12),ACCENT_LIGHT);
-        bannerLbl.setBounds(14,12,W-76,20); banner.add(bannerLbl);
+            new Font("SansSerif", Font.PLAIN, 12), ACCENT_LIGHT);
+        bannerLbl.setBounds(14, 10, W-76, 18);
+        banner.add(bannerLbl);
 
-        int cw=560, ch=620, cardX=cx-cw/2, cardY=118;
-        JPanel card=glassCard(); card.setBounds(cardX,cardY,cw,ch); pg.add(card);
+        int cw=560, ch=560, cardX=cx-cw/2, cardY=106;
+        JPanel card=glassCard();
+        card.setBounds(cardX, cardY, cw, ch);
+        content.add(card);
+        content.setPreferredSize(new Dimension(W, cardY + ch + 24));
 
-        int fx=36, fw=cw-72, fy=20;
-        card.add(fldLbl("Event Title (max 100 chars)",fx,fy,fw)); fy+=18;
-        JTextField fTitle=styledField(); fTitle.setBounds(fx,fy,fw,40); card.add(fTitle); fy+=52;
+        int fx=36, fw=cw-72, fy=16;
+        card.add(fldLbl("Event Title (max 100 chars)",fx,fy,fw)); fy+=16;
+        JTextField fTitle=styledField(); fTitle.setBounds(fx,fy,fw,36); card.add(fTitle); fy+=46;
 
         card.add(fldLbl("Event Type (e.g., College Day, Symposium)",fx,fy,fw));
-        JTextField typeField=styledField(); typeField.setBounds(fx,fy+18,fw,40); card.add(typeField); fy+=70;
+        JTextField typeField=styledField(); typeField.setBounds(fx,fy+16,fw,36); card.add(typeField); fy+=62;
 
         card.add(fldLbl("Venue",fx,fy,fw/2-8));
         JComboBox<String> venueCombo=styledCombo(new String[]{"-- Loading venues --"});
-        venueCombo.setBounds(fx,fy+18,fw/2-8,40); card.add(venueCombo);
-        loadVenueCombo(venueCombo); fy+=70;
+        venueCombo.setBounds(fx,fy+16,fw/2-8,36); card.add(venueCombo);
+        loadVenueCombo(venueCombo); fy+=62;
 
         card.add(fldLbl("Start Date (YYYY-MM-DD)",fx,fy,fw/2-8));
-        card.add(fldLbl("End Date (YYYY-MM-DD)",fx+fw/2+8,fy,fw/2-8)); fy+=18;
-        JTextField fSd=styledField(); fSd.setBounds(fx,fy,fw/2-8,40); card.add(fSd);
-        JTextField fEd=styledField(); fEd.setBounds(fx+fw/2+8,fy,fw/2-8,40); card.add(fEd); fy+=52;
+        card.add(fldLbl("End Date (YYYY-MM-DD)",fx+fw/2+8,fy,fw/2-8)); fy+=16;
+        JTextField fSd=styledField(); fSd.setBounds(fx,fy,fw/2-8,36); card.add(fSd);
+        JTextField fEd=styledField(); fEd.setBounds(fx+fw/2+8,fy,fw/2-8,36); card.add(fEd); fy+=46;
 
         card.add(fldLbl("Start Time (HH:MM)",fx,fy,fw/2-8));
-        card.add(fldLbl("End Time (HH:MM)",fx+fw/2+8,fy,fw/2-8)); fy+=18;
-        JTextField fSt=styledField(); fSt.setBounds(fx,fy,fw/2-8,40); card.add(fSt);
-        JTextField fEt=styledField(); fEt.setBounds(fx+fw/2+8,fy,fw/2-8,40); card.add(fEt); fy+=52;
+        card.add(fldLbl("End Time (HH:MM)",fx+fw/2+8,fy,fw/2-8)); fy+=16;
+        JTextField fSt=styledField(); fSt.setBounds(fx,fy,fw/2-8,36); card.add(fSt);
+        JTextField fEt=styledField(); fEt.setBounds(fx+fw/2+8,fy,fw/2-8,36); card.add(fEt); fy+=46;
 
-        card.add(fldLbl("Description (optional, max 200 chars)",fx,fy,fw)); fy+=18;
+        card.add(fldLbl("Description (optional, max 200 chars)",fx,fy,fw)); fy+=16;
         JTextArea fDesc=new JTextArea();
         fDesc.setBackground(new Color(30,16,60)); fDesc.setForeground(TEXT_PRIMARY);
         fDesc.setFont(new Font("SansSerif",Font.PLAIN,13)); fDesc.setLineWrap(true);
         fDesc.setBorder(BorderFactory.createLineBorder(CARD_BORDER,1));
-        fDesc.setBounds(fx,fy,fw,60); card.add(fDesc); fy+=72;
+        fDesc.setBounds(fx,fy,fw,52); card.add(fDesc); fy+=62;
 
         JLabel statusLbl=makeLabel("",new Font("SansSerif",Font.BOLD,12),ERROR_COL);
         statusLbl.setHorizontalAlignment(SwingConstants.CENTER);
-        statusLbl.setBounds(0,fy,cw,20); card.add(statusLbl);
+        statusLbl.setBounds(0,fy,cw,18); card.add(statusLbl);
 
         JButton btn=buildButton("Create Staff Event",true);
-        btn.setBounds(fx,fy+28,fw,46); card.add(btn);
+        btn.setBounds(fx,fy+22,fw,40); card.add(btn);
 
         btn.addActionListener(e->{
             String title=fTitle.getText().trim(), evType=typeField.getText().trim();
@@ -686,50 +850,123 @@ public class StaffDashboard extends JFrame {
     // ══════════════════════════════════════════════════════════════
     private void buildParticipantsPage(Dimension scr) {
         int slot = isIncharge ? 5 : 3;
-        JPanel pg=pages[slot]; int W=scr.width-SIDEBAR_W_PX, H=scr.height-TOP_H;
-        pg.removeAll();
-        pageTitle(pg,"Event Participants",W);
+        JPanel pg = pages[slot];
+        int W = scr.width - SIDEBAR_W_PX, H = scr.height - TOP_H;
+        JPanel content = createScrollablePage(pg, W, H);
 
-        JLabel evLbl=makeLabel("Select Event:",new Font("SansSerif",Font.PLAIN,12),TEXT_MUTED);
-        evLbl.setBounds(24,66,130,24); pg.add(evLbl);
-        JComboBox<String> evCombo=styledCombo(new String[]{"-- Loading --"});
-        evCombo.setBounds(160,62,400,38); pg.add(evCombo);
+        pageTitle(content, "Event Participants", W);
 
-        JLabel intLbl=makeLabel("Internal Participants (Students)",
-            new Font("Georgia",Font.BOLD|Font.ITALIC,15),ACCENT_LIGHT);
-        intLbl.setBounds(24,112,W-48,22); pg.add(intLbl);
+        JButton refreshBtn = buildButton("↻ Refresh", false);
+        refreshBtn.setBounds(W-130, 18, 110, 32);
+        refreshBtn.addActionListener(e -> refreshParticipantsPage());
+        content.add(refreshBtn);
 
-        String[] c1={"User ID","Name","Reg No","Year","Section","Email","Reg Date","Status"};
-        DefaultTableModel m1=noEditModel(c1); JTable t1=new JTable(m1); styleTable(t1);
-        int tableH=(H-200)/2;
-        pg.add(spAt(styledTableScroll(t1),24,138,W-48,tableH));
+        int tableH = 300;
 
-        JLabel extLbl=makeLabel("External Participants (Guests — Staff Events Only)",
-            new Font("Georgia",Font.BOLD|Font.ITALIC,15),GOLD);
-        extLbl.setBounds(24,138+tableH+10,W-48,22); pg.add(extLbl);
+        if (isIncharge) {
+            JLabel clubLbl = makeLabel("Select Club:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+            clubLbl.setBounds(24, 66, 110, 24); content.add(clubLbl);
+            JComboBox<String> clubCombo = styledCombo(new String[]{"-- Loading --"});
+            clubCombo.setBounds(140, 62, 280, 38); content.add(clubCombo);
 
-        String[] c2={"User ID","Name","Organisation","Role Type","Phone","Reg Date"};
-        DefaultTableModel m2=noEditModel(c2); JTable t2=new JTable(m2); styleTable(t2);
-        pg.add(spAt(styledTableScroll(t2),24,138+tableH+36,W-48,tableH-20));
+            JLabel evLbl = makeLabel("Select Event:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+            evLbl.setBounds(434, 66, 110, 24); content.add(evLbl);
+            JComboBox<String> evCombo = styledCombo(new String[]{"-- Select Club First --"});
+            evCombo.setBounds(550, 62, 380, 38); content.add(evCombo);
 
-        boolean[] loading = {true};
-        loadEventsCombo(evCombo, () -> { loading[0] = false; });
+            JLabel intLbl = makeLabel("Internal Participants (Students)",
+                new Font("Georgia", Font.BOLD|Font.ITALIC, 14), ACCENT_LIGHT);
+            intLbl.setBounds(24, 108, W-48, 20); content.add(intLbl);
 
-        evCombo.addActionListener(e -> {
-            if (loading[0]) return;
-            String sel=(String)evCombo.getSelectedItem();
-            if (sel==null||sel.startsWith("--")) return;
-            try {
-                int evId=Integer.parseInt(sel.split("\\|")[0].trim());
+            String[] c1 = {"User ID","Name","Reg No","Year","Section","Email","Reg Date","Status"};
+            DefaultTableModel m1 = noEditModel(c1);
+            JTable t1 = new JTable(m1);
+            styleTable(t1);
+            content.add(spAt(styledTableScroll(t1), 24, 132, W-48, tableH));
+
+            int extLblY = 132 + tableH + 10;
+            JLabel extLbl = makeLabel("External Participants",
+                new Font("Georgia", Font.BOLD|Font.ITALIC, 14), GOLD);
+            extLbl.setBounds(24, extLblY, W-48, 20); content.add(extLbl);
+
+            String[] c2 = {"User ID","Name","Organisation","Role Type","Phone","Reg Date"};
+            DefaultTableModel m2 = noEditModel(c2);
+            JTable t2 = new JTable(m2);
+            styleTable(t2);
+            content.add(spAt(styledTableScroll(t2), 24, extLblY+24, W-48, tableH));
+            content.setPreferredSize(new Dimension(W, extLblY + 24 + tableH + 20));
+
+            loadStaffInchargeClubsCombo(clubCombo);
+
+            clubCombo.addActionListener(e -> {
+                String csel = (String) clubCombo.getSelectedItem();
                 m1.setRowCount(0); m2.setRowCount(0);
-                if (sel.contains("[Club]")) {
-                    loadClubInternalParticipants(evId, m1);
-                } else {
-                    loadInternalParticipants(evId, m1);
-                    loadExternalParticipants(evId, m2);
+                evCombo.removeAllItems();
+                if (csel == null || csel.startsWith("--")) {
+                    evCombo.addItem("-- Select Club First --"); return;
                 }
-            } catch (Exception ex){}
-        });
+                try {
+                    int clubId = Integer.parseInt(csel.split("\\|")[0].trim());
+                    loadEventsForClub(clubId, evCombo);
+                } catch (Exception ex) { evCombo.addItem("-- Error --"); }
+            });
+
+            evCombo.addActionListener(e -> {
+                String sel = (String) evCombo.getSelectedItem();
+                if (sel == null || sel.startsWith("--")) return;
+                try {
+                    int evId = Integer.parseInt(sel.split("\\|")[0].trim());
+                    m1.setRowCount(0); m2.setRowCount(0);
+                    loadClubInternalParticipants(evId, m1);
+                } catch (Exception ex){}
+            });
+
+        } else {
+            JLabel evLbl = makeLabel("Select Event:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+            evLbl.setBounds(24, 66, 130, 24); content.add(evLbl);
+            JComboBox<String> evCombo = styledCombo(new String[]{"-- Loading --"});
+            evCombo.setBounds(160, 62, 400, 38); content.add(evCombo);
+
+            JLabel intLbl = makeLabel("Internal Participants (Students)",
+                new Font("Georgia", Font.BOLD|Font.ITALIC, 14), ACCENT_LIGHT);
+            intLbl.setBounds(24, 108, W-48, 20); content.add(intLbl);
+
+            String[] c1 = {"User ID","Name","Reg No","Year","Section","Email","Reg Date","Status"};
+            DefaultTableModel m1 = noEditModel(c1);
+            JTable t1 = new JTable(m1);
+            styleTable(t1);
+            content.add(spAt(styledTableScroll(t1), 24, 132, W-48, tableH));
+
+            int extLblY = 132 + tableH + 10;
+            JLabel extLbl = makeLabel("External Participants (Guests — Staff Events Only)",
+                new Font("Georgia", Font.BOLD|Font.ITALIC, 14), GOLD);
+            extLbl.setBounds(24, extLblY, W-48, 20); content.add(extLbl);
+
+            String[] c2 = {"User ID","Name","Organisation","Role Type","Phone","Reg Date"};
+            DefaultTableModel m2 = noEditModel(c2);
+            JTable t2 = new JTable(m2);
+            styleTable(t2);
+            content.add(spAt(styledTableScroll(t2), 24, extLblY+24, W-48, tableH));
+            content.setPreferredSize(new Dimension(W, extLblY + 24 + tableH + 20));
+
+            boolean[] loading = {true};
+            loadEventsCombo(evCombo, () -> { loading[0] = false; });
+            evCombo.addActionListener(e -> {
+                if (loading[0]) return;
+                String sel = (String) evCombo.getSelectedItem();
+                if (sel == null || sel.startsWith("--")) return;
+                try {
+                    int evId = Integer.parseInt(sel.split("\\|")[0].trim());
+                    m1.setRowCount(0); m2.setRowCount(0);
+                    if (sel.contains("[Club]")) {
+                        loadClubInternalParticipants(evId, m1);
+                    } else {
+                        loadInternalParticipants(evId, m1);
+                        loadExternalParticipants(evId, m2);
+                    }
+                } catch (Exception ex){}
+            });
+        }
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -739,30 +976,71 @@ public class StaffDashboard extends JFrame {
         int slot = isIncharge ? 6 : 4;
         JPanel pg = pages[slot];
         int W = scr.width - SIDEBAR_W_PX, H = scr.height - TOP_H;
-        pg.removeAll();
-        pageTitle(pg, "Mark Attendance", W);
+        JPanel content = createScrollablePage(pg, W, H);
 
-        JLabel evLbl = makeLabel("Select Event:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
-        evLbl.setBounds(24, 66, 130, 24); pg.add(evLbl);
-        JComboBox<String> evCombo = styledCombo(new String[]{"-- Loading --"});
-        evCombo.setBounds(160, 62, 440, 38); pg.add(evCombo);
+        pageTitle(content, "Mark Attendance", W);
 
-        JLabel counterLbl = makeLabel("", new Font("SansSerif", Font.BOLD, 13), TEXT_MUTED);
-        counterLbl.setBounds(24, 106, W - 48, 22); pg.add(counterLbl);
+        JButton refreshBtn = buildButton("↻ Refresh", false);
+        refreshBtn.setBounds(W-130, 18, 110, 32);
+        content.add(refreshBtn);
+
+        JComboBox<String> evCombo;
+        if (isIncharge) {
+            JLabel clubLbl = makeLabel("Select Club:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+            clubLbl.setBounds(24, 66, 110, 24); content.add(clubLbl);
+            JComboBox<String> clubCombo = styledCombo(new String[]{"-- Loading --"});
+            clubCombo.setBounds(140, 62, 260, 38); content.add(clubCombo);
+
+            JLabel evLbl = makeLabel("Select Event:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+            evLbl.setBounds(412, 66, 110, 24); content.add(evLbl);
+            evCombo = styledCombo(new String[]{"-- Select Club First --"});
+            evCombo.setBounds(528, 62, 360, 38); content.add(evCombo);
+
+            loadStaffInchargeClubsCombo(clubCombo);
+            JComboBox<String> finalEvCombo = evCombo;
+            clubCombo.addActionListener(e -> {
+                String csel = (String) clubCombo.getSelectedItem();
+                finalEvCombo.removeAllItems();
+                if (csel == null || csel.startsWith("--")) {
+                    finalEvCombo.addItem("-- Select Club First --"); return;
+                }
+                try {
+                    int clubId = Integer.parseInt(csel.split("\\|")[0].trim());
+                    loadEventsForClub(clubId, finalEvCombo);
+                } catch (Exception ex) { finalEvCombo.addItem("-- Error --"); }
+            });
+        } else {
+            JLabel evLbl = makeLabel("Select Event:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+            evLbl.setBounds(24, 66, 130, 24); content.add(evLbl);
+            evCombo = styledCombo(new String[]{"-- Loading --"});
+            evCombo.setBounds(160, 62, 440, 38); content.add(evCombo);
+        }
+
+        // ── Date validation banner ──────────────────────────────
+        JPanel dateBanner = glassCard();
+        dateBanner.setBounds(24, 108, W-48, 34);
+        dateBanner.setVisible(false);
+        content.add(dateBanner);
+        JLabel dateBannerLbl = makeLabel("", new Font("SansSerif", Font.BOLD, 12), WARN_COL);
+        dateBannerLbl.setBounds(12, 8, W-96, 18);
+        dateBanner.add(dateBannerLbl);
+
+        int controlsY = 150;
+        JLabel counterLbl = makeLabel("", new Font("SansSerif", Font.BOLD, 12), TEXT_MUTED);
+        counterLbl.setBounds(24, controlsY, W-300, 20); content.add(counterLbl);
 
         JButton selAllBtn   = buildButton("☑ All Present", false);
         JButton deselAllBtn = buildButton("☐ All Absent",  false);
-        JButton refreshBtn  = buildButton("↻ Refresh",     false);
-        selAllBtn  .setBounds(24,  134, 140, 34);
-        deselAllBtn.setBounds(172, 134, 140, 34);
-        refreshBtn .setBounds(320, 134, 120, 34);
-        pg.add(selAllBtn); pg.add(deselAllBtn); pg.add(refreshBtn);
+        JButton reloadBtn   = buildButton("↻ Reload",       false);
+        selAllBtn  .setBounds(24,  controlsY + 24, 130, 32);
+        deselAllBtn.setBounds(162, controlsY + 24, 130, 32);
+        reloadBtn  .setBounds(300, controlsY + 24, 110, 32);
+        content.add(selAllBtn); content.add(deselAllBtn); content.add(reloadBtn);
 
-        JLabel infoLbl = makeLabel("Select an event to mark attendance",
+        JLabel infoLbl = makeLabel("Select a club and event to mark attendance",
             new Font("SansSerif", Font.BOLD, 12), TEXT_MUTED);
-        infoLbl.setBounds(24, H - 80, W - 48, 70);
-        infoLbl.setVerticalAlignment(SwingConstants.TOP);
-        pg.add(infoLbl);
+        infoLbl.setBounds(24, controlsY + 62, W-48, 18);
+        content.add(infoLbl);
 
         DefaultTableModel model = new DefaultTableModel(
                 new String[]{"User ID","Name","Reg No","Year","Section","Email","Present ✓"}, 0) {
@@ -778,7 +1056,7 @@ public class StaffDashboard extends JFrame {
 
         JTable table = new JTable(model);
         styleTable(table);
-        table.setRowHeight(36);
+        table.setRowHeight(34);
 
         table.getColumn("Present ✓").setCellRenderer(new TableCellRenderer() {
             @Override public Component getTableCellRendererComponent(
@@ -809,91 +1087,171 @@ public class StaffDashboard extends JFrame {
         table.getColumn("Present ✓").setPreferredWidth(90);
         table.getColumn("User ID")  .setPreferredWidth(70);
 
-        pg.add(spAt(styledTableScroll(table), 24, 174, W - 48, H - 300));
+        int tableTop = controlsY + 90;
+        int tableH   = 340;
+        int saveY    = tableTop + tableH + 12;
+        int totalH   = saveY + 52;
+
+        content.add(spAt(styledTableScroll(table), 24, tableTop, W-48, tableH));
 
         JButton saveBtn = buildButton("💾 Save Attendance", true);
-        saveBtn.setBounds(24, H - 130, 220, 48); pg.add(saveBtn);
+        saveBtn.setBounds(24, saveY, 200, 42);
+        content.add(saveBtn);
 
-        boolean[] loading = {true};
+        content.setPreferredSize(new Dimension(W, totalH));
+
         int[] currentEventId = {-1};
-        boolean[] isClubEvent = {false};
+        boolean[] eventStarted = {true};
 
-        loadEventsCombo(evCombo, () -> { loading[0] = false; });
+        if (!isIncharge) {
+            boolean[] loading = {true};
+            loadEventsCombo(evCombo, () -> { loading[0] = false; });
+            evCombo.addActionListener(e -> {
+                if (loading[0]) return;
+                String sel = (String) evCombo.getSelectedItem();
+                if (sel == null || sel.startsWith("--")) {
+                    infoLbl.setForeground(TEXT_MUTED);
+                    infoLbl.setText("Select an event to mark attendance");
+                    model.setRowCount(0); counterLbl.setText(""); currentEventId[0] = -1;
+                    dateBanner.setVisible(false); return;
+                }
+                stopEditing(table); model.setRowCount(0); counterLbl.setText("");
+                try {
+                    int evId = Integer.parseInt(sel.split("\\|")[0].trim());
+                    currentEventId[0] = evId;
+                    boolean isClub = sel.contains("[Club]");
+                    checkEventDateAndLoad(evId, isClub, model, infoLbl, counterLbl,
+                        dateBanner, dateBannerLbl, eventStarted, saveBtn, selAllBtn, deselAllBtn);
+                } catch (Exception ex) { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Error: "+ex.getMessage()); }
+            });
+        } else {
+            evCombo.addActionListener(e -> {
+                String sel = (String) evCombo.getSelectedItem();
+                if (sel == null || sel.startsWith("--")) {
+                    infoLbl.setForeground(TEXT_MUTED);
+                    infoLbl.setText("Select a club and event to mark attendance");
+                    model.setRowCount(0); counterLbl.setText(""); currentEventId[0] = -1;
+                    dateBanner.setVisible(false); return;
+                }
+                stopEditing(table); model.setRowCount(0); counterLbl.setText("");
+                try {
+                    int evId = Integer.parseInt(sel.split("\\|")[0].trim());
+                    currentEventId[0] = evId;
+                    checkEventDateAndLoad(evId, true, model, infoLbl, counterLbl,
+                        dateBanner, dateBannerLbl, eventStarted, saveBtn, selAllBtn, deselAllBtn);
+                } catch (Exception ex) { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Error: "+ex.getMessage()); }
+            });
+        }
 
         selAllBtn.addActionListener(e -> {
+            if (!eventStarted[0]) return;
             stopEditing(table);
             for (int i = 0; i < model.getRowCount(); i++) model.setValueAt(true, i, 6);
             table.repaint();
         });
-
         deselAllBtn.addActionListener(e -> {
+            if (!eventStarted[0]) return;
             stopEditing(table);
             for (int i = 0; i < model.getRowCount(); i++) model.setValueAt(false, i, 6);
             table.repaint();
         });
-
-        refreshBtn.addActionListener(e -> {
+        reloadBtn.addActionListener(e -> {
             if (currentEventId[0] < 0) return;
-            stopEditing(table);
-            model.setRowCount(0);
-            counterLbl.setText("");
-            if (isClubEvent[0])
-                loadClubParticipantsForAttendance(currentEventId[0], model, infoLbl, counterLbl);
-            else
-                loadParticipantsForAttendance(currentEventId[0], model, infoLbl, counterLbl);
+            stopEditing(table); model.setRowCount(0); counterLbl.setText("");
+            String sel = (String) evCombo.getSelectedItem();
+            boolean isClub = (sel != null && sel.contains("[Club]")) || isIncharge;
+            checkEventDateAndLoad(currentEventId[0], isClub, model, infoLbl, counterLbl,
+                dateBanner, dateBannerLbl, eventStarted, saveBtn, selAllBtn, deselAllBtn);
         });
 
-        evCombo.addActionListener(e -> {
-            if (loading[0]) return;
-            String sel = (String) evCombo.getSelectedItem();
-            if (sel == null || sel.startsWith("--")) {
-                infoLbl.setForeground(TEXT_MUTED);
-                infoLbl.setText("Select an event to mark attendance");
-                model.setRowCount(0);
-                counterLbl.setText("");
-                currentEventId[0] = -1;
-                return;
-            }
-            stopEditing(table);
-            model.setRowCount(0);
-            counterLbl.setText("");
-            try {
-                int evId = Integer.parseInt(sel.split("\\|")[0].trim());
-                currentEventId[0] = evId;
-                isClubEvent[0] = sel.contains("[Club]");
-                if (isClubEvent[0])
-                    loadClubParticipantsForAttendance(evId, model, infoLbl, counterLbl);
-                else
-                    loadParticipantsForAttendance(evId, model, infoLbl, counterLbl);
-            } catch (Exception ex) {
-                infoLbl.setForeground(ERROR_COL);
-                infoLbl.setText("Error: " + ex.getMessage());
+        refreshBtn.addActionListener(e -> {
+            if (currentEventId[0] >= 0) {
+                stopEditing(table); model.setRowCount(0); counterLbl.setText("");
+                String sel = (String) evCombo.getSelectedItem();
+                boolean isClub = (sel != null && sel.contains("[Club]")) || isIncharge;
+                checkEventDateAndLoad(currentEventId[0], isClub, model, infoLbl, counterLbl,
+                    dateBanner, dateBannerLbl, eventStarted, saveBtn, selAllBtn, deselAllBtn);
             }
         });
 
         saveBtn.addActionListener(e -> {
-            if (currentEventId[0] < 0) {
+            if (!eventStarted[0]) {
                 infoLbl.setForeground(ERROR_COL);
-                infoLbl.setText("Select an event first.");
-                return;
+                infoLbl.setText("❌ Cannot save — event has not started yet."); return;
+            }
+            if (currentEventId[0] < 0) {
+                infoLbl.setForeground(ERROR_COL); infoLbl.setText("Select an event first."); return;
             }
             stopEditing(table);
-
             if (model.getRowCount() == 0) {
-                infoLbl.setForeground(ERROR_COL);
-                infoLbl.setText("No participants loaded — cannot save.");
-                return;
+                infoLbl.setForeground(ERROR_COL); infoLbl.setText("No participants loaded — cannot save."); return;
             }
-
             Map<Integer, String> attendanceMap = new LinkedHashMap<>();
             for (int i = 0; i < model.getRowCount(); i++) {
                 int uid = (int) model.getValueAt(i, 0);
                 boolean present = Boolean.TRUE.equals(model.getValueAt(i, 6));
                 attendanceMap.put(uid, present ? "Present" : "Absent");
             }
-
             saveAttendance(currentEventId[0], attendanceMap, infoLbl, counterLbl, model);
         });
+    }
+
+    private void checkEventDateAndLoad(int eventId, boolean isClub,
+                                        DefaultTableModel model, JLabel infoLbl, JLabel counterLbl,
+                                        JPanel dateBanner, JLabel dateBannerLbl,
+                                        boolean[] eventStartedFlag,
+                                        JButton saveBtn, JButton selAllBtn, JButton deselAllBtn) {
+        new Thread(() -> {
+            try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+                String sql = isClub
+                    ? "SELECT start_date, end_date, event_title FROM event WHERE event_id = ?"
+                    : "SELECT start_date, end_date, event_title FROM staff_event WHERE event_id = ?";
+                PreparedStatement ps = con.prepareStatement(sql);
+                ps.setInt(1, eventId);
+                ResultSet rs = ps.executeQuery();
+                if (!rs.next()) {
+                    SwingUtilities.invokeLater(() -> { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Event not found."); });
+                    return;
+                }
+                java.sql.Date startDate = rs.getDate(1);
+                java.sql.Date endDate   = rs.getDate(2);
+                String eventTitle       = rs.getString(3);
+                LocalDate today         = LocalDate.now();
+                LocalDate evStart       = startDate.toLocalDate();
+                LocalDate evEnd         = endDate.toLocalDate();
+
+                boolean started = !today.isBefore(evStart);
+                boolean ended   = today.isAfter(evEnd);
+
+                SwingUtilities.invokeLater(() -> {
+                    eventStartedFlag[0] = started;
+                    if (!started) {
+                        long daysUntil = ChronoUnit.DAYS.between(today, evStart);
+                        dateBannerLbl.setForeground(WARN_COL);
+                        dateBannerLbl.setText("⚠  Event \"" + eventTitle + "\" starts on " + evStart +
+                            " — " + daysUntil + " day(s) away. Attendance marking is disabled until then.");
+                        dateBanner.setVisible(true);
+                        saveBtn.setEnabled(false); selAllBtn.setEnabled(false); deselAllBtn.setEnabled(false);
+                        infoLbl.setForeground(WARN_COL);
+                        infoLbl.setText("Event has not started yet. You can preview participants but cannot save attendance.");
+                        if (isClub) loadClubParticipantsForAttendance(eventId, model, infoLbl, counterLbl);
+                        else        loadParticipantsForAttendance(eventId, model, infoLbl, counterLbl);
+                    } else {
+                        dateBanner.setVisible(false);
+                        saveBtn.setEnabled(true); selAllBtn.setEnabled(true); deselAllBtn.setEnabled(true);
+                        if (ended) {
+                            dateBannerLbl.setForeground(new Color(100, 200, 255));
+                            dateBannerLbl.setText("ℹ  Event \"" + eventTitle + "\" ended on " + evEnd + " — you can still update attendance.");
+                            dateBanner.setVisible(true);
+                        }
+                        if (isClub) loadClubParticipantsForAttendance(eventId, model, infoLbl, counterLbl);
+                        else        loadParticipantsForAttendance(eventId, model, infoLbl, counterLbl);
+                    }
+                });
+            } catch (SQLException ex) {
+                SwingUtilities.invokeLater(() -> { infoLbl.setForeground(ERROR_COL); infoLbl.setText("DB Error: " + ex.getMessage()); });
+            }
+        }).start();
     }
 
     private void stopEditing(JTable table) {
@@ -912,9 +1270,17 @@ public class StaffDashboard extends JFrame {
     }
 
     private void loadParticipantsForAttendance(int eventId, DefaultTableModel model,
-                                                JLabel infoLbl, JLabel counterLbl) {
+                                            JLabel infoLbl, JLabel counterLbl) {
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+                PreparedStatement verify = con.prepareStatement(
+                    "SELECT COUNT(*) FROM staff_event WHERE event_id = ? AND organiser_id = ?");
+                verify.setInt(1, eventId); verify.setInt(2, userId);
+                ResultSet vRs = verify.executeQuery();
+                if (!vRs.next() || vRs.getInt(1) == 0) {
+                    SwingUtilities.invokeLater(() -> { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Access denied: you are not the organiser of this event."); });
+                    return;
+                }
                 PreparedStatement ps = con.prepareStatement(
                     "SELECT u.user_id, u.name, " +
                     "NVL(s.reg_num,'—'), NVL(TO_CHAR(s.year),'—'), NVL(s.section,'—'), u.email, " +
@@ -926,14 +1292,12 @@ public class StaffDashboard extends JFrame {
                     "WHERE ser.event_id=? ORDER BY u.name");
                 ps.setInt(1, eventId); ps.setInt(2, eventId);
                 ResultSet rs = ps.executeQuery();
-
                 java.util.List<Object[]> rows = new java.util.ArrayList<>();
                 while (rs.next()) {
                     boolean present = "Present".equalsIgnoreCase(rs.getString(7));
                     rows.add(new Object[]{ rs.getInt(1), rs.getString(2), rs.getString(3),
                         rs.getString(4), rs.getString(5), rs.getString(6), present });
                 }
-
                 SwingUtilities.invokeLater(() -> {
                     for (Object[] row : rows) model.addRow(row);
                     updateCounter(model, counterLbl);
@@ -946,10 +1310,7 @@ public class StaffDashboard extends JFrame {
                     }
                 });
             } catch (SQLException ex) {
-                SwingUtilities.invokeLater(() -> {
-                    infoLbl.setForeground(ERROR_COL);
-                    infoLbl.setText("DB Error: " + ex.getMessage());
-                });
+                SwingUtilities.invokeLater(() -> { infoLbl.setForeground(ERROR_COL); infoLbl.setText("DB Error: " + ex.getMessage()); });
             }
         }).start();
     }
@@ -965,10 +1326,7 @@ public class StaffDashboard extends JFrame {
                 verify.setInt(1, eventId); verify.setInt(2, userId);
                 ResultSet vRs = verify.executeQuery();
                 if (!vRs.next() || vRs.getInt(1) == 0) {
-                    SwingUtilities.invokeLater(() -> {
-                        infoLbl.setForeground(ERROR_COL);
-                        infoLbl.setText("Access denied: you are not the club incharge for this event.");
-                    });
+                    SwingUtilities.invokeLater(() -> { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Access denied: you are not the club incharge for this event."); });
                     return;
                 }
                 PreparedStatement ps = con.prepareStatement(
@@ -982,14 +1340,12 @@ public class StaffDashboard extends JFrame {
                     "WHERE r.event_id=? ORDER BY u.name");
                 ps.setInt(1, eventId); ps.setInt(2, eventId);
                 ResultSet rs = ps.executeQuery();
-
                 java.util.List<Object[]> rows = new java.util.ArrayList<>();
                 while (rs.next()) {
                     boolean present = "Present".equalsIgnoreCase(rs.getString(7));
                     rows.add(new Object[]{ rs.getInt(1), rs.getString(2), rs.getString(3),
                         rs.getString(4), rs.getString(5), rs.getString(6), present });
                 }
-
                 SwingUtilities.invokeLater(() -> {
                     for (Object[] row : rows) model.addRow(row);
                     updateCounter(model, counterLbl);
@@ -1002,191 +1358,251 @@ public class StaffDashboard extends JFrame {
                     }
                 });
             } catch (SQLException ex) {
-                SwingUtilities.invokeLater(() -> {
-                    infoLbl.setForeground(ERROR_COL);
-                    infoLbl.setText("DB Error: " + ex.getMessage());
-                });
+                SwingUtilities.invokeLater(() -> { infoLbl.setForeground(ERROR_COL); infoLbl.setText("DB Error: " + ex.getMessage()); });
             }
         }).start();
     }
 
-    private void saveAttendance(int eventId,
-                                 Map<Integer, String> attendanceMap,
-                                 JLabel infoLbl,
-                                 JLabel counterLbl,
-                                 DefaultTableModel model) {
+    private void saveAttendance(int eventId, Map<Integer, String> attendanceMap,
+                                 JLabel infoLbl, JLabel counterLbl, DefaultTableModel model) {
         new Thread(() -> {
             Connection con = null;
             try {
                 con = DriverManager.getConnection(dbUrl, dbUser, dbPass);
                 con.setAutoCommit(false);
-
                 String mergeSql =
-                    "MERGE INTO student_attendance sa " +
-                    "USING dual " +
+                    "MERGE INTO student_attendance sa USING dual " +
                     "ON (sa.event_id = ? AND sa.user_id = ?) " +
-                    "WHEN MATCHED THEN " +
-                    "  UPDATE SET sa.attendance_status = ?, " +
-                    "    sa.attendance_date = TRUNC(SYSDATE), " +
-                    "    sa.attendance_time = SYSTIMESTAMP " +
-                    "WHEN NOT MATCHED THEN " +
-                    "  INSERT (event_id, user_id, attendance_date, attendance_time, attendance_status) " +
+                    "WHEN MATCHED THEN UPDATE SET sa.attendance_status = ?, " +
+                    "  sa.attendance_date = TRUNC(SYSDATE), sa.attendance_time = SYSTIMESTAMP " +
+                    "WHEN NOT MATCHED THEN INSERT " +
+                    "  (event_id, user_id, attendance_date, attendance_time, attendance_status) " +
                     "  VALUES (?, ?, TRUNC(SYSDATE), SYSTIMESTAMP, ?)";
-
                 int saved = 0, present = 0;
                 for (Map.Entry<Integer, String> entry : attendanceMap.entrySet()) {
-                    int uid = entry.getKey();
-                    String status = entry.getValue();
+                    int uid = entry.getKey(); String status = entry.getValue();
                     PreparedStatement merge = con.prepareStatement(mergeSql);
-                    merge.setInt(1, eventId);
-                    merge.setInt(2, uid);
-                    merge.setString(3, status);
-                    merge.setInt(4, eventId);
-                    merge.setInt(5, uid);
-                    merge.setString(6, status);
-                    merge.executeUpdate();
-                    merge.close();
+                    merge.setInt(1, eventId); merge.setInt(2, uid); merge.setString(3, status);
+                    merge.setInt(4, eventId); merge.setInt(5, uid); merge.setString(6, status);
+                    merge.executeUpdate(); merge.close();
                     saved++;
                     if ("Present".equalsIgnoreCase(status)) present++;
                 }
                 con.commit();
-
                 final int fs = saved, fp = present;
                 SwingUtilities.invokeLater(() -> {
                     infoLbl.setForeground(SUCCESS_COL);
-                    infoLbl.setText("✅ Saved!  " + fp + " Present  " + (fs - fp) +
-                        " Absent  — reflected in Student Dashboard.");
+                    infoLbl.setText("✅ Saved!  " + fp + " Present  " + (fs - fp) + " Absent  — reflected in Student Dashboard.");
                     updateCounter(model, counterLbl);
                 });
-
             } catch (SQLException ex) {
-                if (con != null) {
-                    try { con.rollback(); } catch (SQLException ignored) {}
-                }
+                if (con != null) { try { con.rollback(); } catch (SQLException ignored) {} }
                 ex.printStackTrace();
-                SwingUtilities.invokeLater(() -> {
-                    infoLbl.setForeground(ERROR_COL);
-                    String msg = ex.getMessage() == null ? "DB error" : ex.getMessage();
-                    infoLbl.setText("Error: " + msg);
-                });
+                SwingUtilities.invokeLater(() -> { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Error: " + ex.getMessage()); });
             } finally {
-                if (con != null) {
-                    try { con.setAutoCommit(true); con.close(); } catch (SQLException ignored) {}
-                }
+                if (con != null) { try { con.setAutoCommit(true); con.close(); } catch (SQLException ignored) {} }
             }
         }).start();
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  CERTIFICATES PAGE  (FIXED)
+    //  CERTIFICATES PAGE
     // ══════════════════════════════════════════════════════════════
     private void buildCertificatesPage(Dimension scr) {
         int slot = isIncharge ? 7 : 5;
         JPanel pg = pages[slot];
         int W = scr.width - SIDEBAR_W_PX, H = scr.height - TOP_H;
-        pg.removeAll();
-        pageTitle(pg, "Issue Certificates", W);
+        JPanel content = createScrollablePage(pg, W, H);
 
-        // ── Top controls row ──────────────────────────────────────
-        JLabel evLbl = makeLabel("Select Event:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
-        evLbl.setBounds(24, 66, 130, 24); pg.add(evLbl);
-        JComboBox<String> evCombo = styledCombo(new String[]{"-- Loading --"});
-        evCombo.setBounds(160, 62, 400, 38); pg.add(evCombo);
+        pageTitle(content, "Issue Certificates", W);
+
+        JButton refreshBtn = buildButton("↻ Refresh", false);
+        refreshBtn.setBounds(W-130, 18, 110, 32);
+        content.add(refreshBtn);
+
+        JComboBox<String> evCombo;
+        if (isIncharge) {
+            JLabel clubLbl = makeLabel("Select Club:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+            clubLbl.setBounds(24, 66, 110, 24); content.add(clubLbl);
+            JComboBox<String> clubCombo = styledCombo(new String[]{"-- Loading --"});
+            clubCombo.setBounds(140, 62, 240, 38); content.add(clubCombo);
+
+            JLabel evLbl = makeLabel("Select Event:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+            evLbl.setBounds(392, 66, 110, 24); content.add(evLbl);
+            evCombo = styledCombo(new String[]{"-- Select Club First --"});
+            evCombo.setBounds(508, 62, 320, 38); content.add(evCombo);
+
+            loadStaffInchargeClubsCombo(clubCombo);
+            JComboBox<String> finalEvCombo = evCombo;
+            clubCombo.addActionListener(e -> {
+                String csel = (String) clubCombo.getSelectedItem();
+                finalEvCombo.removeAllItems();
+                if (csel == null || csel.startsWith("--")) { finalEvCombo.addItem("-- Select Club First --"); return; }
+                try {
+                    int clubId = Integer.parseInt(csel.split("\\|")[0].trim());
+                    loadEventsForClub(clubId, finalEvCombo);
+                } catch (Exception ex) { finalEvCombo.addItem("-- Error --"); }
+            });
+        } else {
+            JLabel evLbl = makeLabel("Select Event:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+            evLbl.setBounds(24, 66, 130, 24); content.add(evLbl);
+            evCombo = styledCombo(new String[]{"-- Loading --"});
+            evCombo.setBounds(160, 62, 400, 38); content.add(evCombo);
+        }
 
         JLabel typeLbl = makeLabel("Certificate Type:", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
-        typeLbl.setBounds(600, 66, 130, 24); pg.add(typeLbl);
+        typeLbl.setBounds(W-330, 66, 130, 24); content.add(typeLbl);
         JComboBox<String> typeCombo = styledCombo(new String[]{"Participant", "Winner", "Runner-up"});
-        typeCombo.setBounds(738, 62, 160, 38); pg.add(typeCombo);
+        typeCombo.setBounds(W-196, 62, 168, 38); content.add(typeCombo);
 
-        // ── Bulk-select buttons ───────────────────────────────────
-        JButton selAllBtn = buildButton("☑ Select All", false);
-        selAllBtn.setBounds(24, 108, 140, 34); pg.add(selAllBtn);
-        JButton deselAllBtn = buildButton("☐ Deselect All", false);
-        deselAllBtn.setBounds(172, 108, 150, 34); pg.add(deselAllBtn);
+        JButton selAllBtn      = buildButton("☑ Select All",      false);
+        JButton deselAllBtn    = buildButton("☐ Deselect All",    false);
         JButton selEligibleBtn = buildButton("☑ Select Eligible", false);
-        selEligibleBtn.setBounds(330, 108, 160, 34); pg.add(selEligibleBtn);
+        selAllBtn     .setBounds(24,  108, 130, 32); content.add(selAllBtn);
+        deselAllBtn   .setBounds(162, 108, 140, 32); content.add(deselAllBtn);
+        selEligibleBtn.setBounds(310, 108, 154, 32); content.add(selEligibleBtn);
 
-        // ── Table ─────────────────────────────────────────────────
-        String[] cols = {"User ID","Name","Reg No","Year","Section","Email","Attendance","Issue ✓"};
+        JLabel onceNote = makeLabel(
+            "ℹ  Certificates are issued once per student per event per type. Already-issued ones are shown but cannot be re-issued.",
+            new Font("SansSerif", Font.PLAIN, 11), new Color(160, 200, 255));
+        onceNote.setBounds(24, 148, W-48, 18); content.add(onceNote);
+
+        String[] cols = {"User ID","Name","Reg No","Year","Section","Email","Attendance","Already Issued","Issue ✓"};
         DefaultTableModel model = new DefaultTableModel(cols, 0) {
-            @Override public Class<?> getColumnClass(int c) {
-                return c == 7 ? Boolean.class : Object.class;
+            @Override public Class<?> getColumnClass(int c) { return c == 8 ? Boolean.class : Object.class; }
+            @Override public boolean isCellEditable(int r, int c) {
+                if (c == 8) return !"Yes".equals(getValueAt(r, 7));
+                return false;
             }
-            @Override public boolean isCellEditable(int r, int c) { return c == 7; }
         };
         JTable table = new JTable(model);
         styleTable(table);
-        table.setRowHeight(36);
+        table.setRowHeight(34);
 
-        // Attendance column — colour-coded
         table.getColumn("Attendance").setCellRenderer(new DefaultTableCellRenderer() {
-            @Override public Component getTableCellRendererComponent(
-                    JTable t, Object v, boolean sel, boolean foc, int row, int col) {
+            @Override public Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean foc, int row, int col) {
                 JLabel lbl = (JLabel) super.getTableCellRendererComponent(t, v, sel, foc, row, col);
                 String s = v == null ? "" : v.toString();
-                lbl.setForeground("Present".equalsIgnoreCase(s) ? SUCCESS_COL
-                    : "Absent".equalsIgnoreCase(s) ? ERROR_COL : new Color(255, 180, 60));
+                lbl.setForeground("Present".equalsIgnoreCase(s) ? SUCCESS_COL : "Absent".equalsIgnoreCase(s) ? ERROR_COL : new Color(255, 180, 60));
                 lbl.setFont(new Font("SansSerif", Font.BOLD, 12));
-                lbl.setBackground(sel ? new Color(100, 50, 200, 120)
-                    : row % 2 == 0 ? new Color(12, 6, 30) : new Color(20, 10, 45));
-                lbl.setOpaque(true); lbl.setBorder(new EmptyBorder(0, 12, 0, 12)); return lbl;
+                lbl.setBackground(sel ? new Color(100,50,200,120) : row%2==0 ? new Color(12,6,30) : new Color(20,10,45));
+                lbl.setOpaque(true); lbl.setBorder(new EmptyBorder(0,10,0,10)); return lbl;
             }
         });
 
-        // Issue checkbox column renderer
+        table.getColumn("Already Issued").setCellRenderer(new DefaultTableCellRenderer() {
+            @Override public Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean foc, int row, int col) {
+                JLabel lbl = (JLabel) super.getTableCellRendererComponent(t, v, sel, foc, row, col);
+                String s = v == null ? "" : v.toString();
+                if ("Yes".equals(s)) { lbl.setText("✓ Issued"); lbl.setForeground(SUCCESS_COL); }
+                else { lbl.setText("—"); lbl.setForeground(TEXT_MUTED); }
+                lbl.setFont(new Font("SansSerif", Font.BOLD, 12));
+                lbl.setHorizontalAlignment(SwingConstants.CENTER);
+                lbl.setBackground(sel ? new Color(100,50,200,120) : row%2==0 ? new Color(12,6,30) : new Color(20,10,45));
+                lbl.setOpaque(true); lbl.setBorder(new EmptyBorder(0,8,0,8)); return lbl;
+            }
+        });
+
         table.getColumn("Issue ✓").setCellRenderer(new TableCellRenderer() {
-            @Override public Component getTableCellRendererComponent(
-                    JTable t, Object v, boolean sel, boolean foc, int row, int col) {
+            @Override public Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean foc, int row, int col) {
+                Object alreadyIssued = t.getValueAt(row, 7);
+                if ("Yes".equals(alreadyIssued)) {
+                    JLabel lock = new JLabel("🔒", SwingConstants.CENTER);
+                    lock.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 14));
+                    lock.setBackground(row%2==0 ? new Color(12,6,30) : new Color(20,10,45));
+                    lock.setOpaque(true); return lock;
+                }
                 JCheckBox cb = new JCheckBox();
                 cb.setSelected(Boolean.TRUE.equals(v));
                 cb.setHorizontalAlignment(SwingConstants.CENTER);
-                cb.setBackground(sel ? new Color(100, 50, 200, 120)
-                    : row % 2 == 0 ? new Color(12, 6, 30) : new Color(20, 10, 45));
+                cb.setBackground(sel ? new Color(100,50,200,120) : row%2==0 ? new Color(12,6,30) : new Color(20,10,45));
                 cb.setForeground(GOLD); cb.setOpaque(true); return cb;
             }
         });
 
-        // Issue checkbox column editor
         JCheckBox certEditorCb = new JCheckBox();
         certEditorCb.setHorizontalAlignment(SwingConstants.CENTER);
         certEditorCb.setBackground(new Color(20, 10, 45));
         certEditorCb.setForeground(GOLD);
         certEditorCb.setOpaque(true);
-        table.getColumn("Issue ✓").setCellEditor(new DefaultCellEditor(certEditorCb));
-        table.getColumn("Issue ✓").setPreferredWidth(70);
-        table.getColumn("User ID").setPreferredWidth(70);
+        table.getColumn("Issue ✓")      .setCellEditor(new DefaultCellEditor(certEditorCb));
+        table.getColumn("Issue ✓")      .setPreferredWidth(70);
+        table.getColumn("Already Issued").setPreferredWidth(90);
+        table.getColumn("User ID")      .setPreferredWidth(65);
+        table.getColumn("Reg No")       .setPreferredWidth(100);
 
-     // ── Layout: table takes most space, infoLbl + button placed directly on pg ──
-        final int CONTROLS_BOTTOM = 150;
-        final int BTN_H = 46;
-        final int INFO_H = 40;
+        int tableTop = 172;
+        int tableH   = 340;
+        int issueBtnY = tableTop + tableH + 12;
+        int totalH    = issueBtnY + 52;
 
-        // Fix positions manually (safe layout)
-        int tableAreaH = H - 320;     // fixed safe height
-        int INFO_Y = CONTROLS_BOTTOM + tableAreaH + 10;
-        int BTN_Y = INFO_Y + INFO_H + 5;
-       
+        content.add(spAt(styledTableScroll(table), 24, tableTop, W-48, tableH));
 
-        pg.add(spAt(styledTableScroll(table), 24, CONTROLS_BOTTOM, W - 48, tableAreaH));
-
-        JLabel infoLbl = makeLabel("Select an event to view participants",
+        JLabel infoLbl = makeLabel("Select a club and event to view participants",
             new Font("SansSerif", Font.BOLD, 12), TEXT_MUTED);
-        infoLbl.setBounds(24, INFO_Y, W - 48, INFO_H);
+        infoLbl.setBounds(24, issueBtnY + 4, W-270, 40);
         infoLbl.setVerticalAlignment(SwingConstants.TOP);
-        pg.add(infoLbl);
+        content.add(infoLbl);
 
         JButton issueBtn = buildButton("🎓 Issue Selected Certificates", true);
-        issueBtn.setBounds(W - 360, BTN_Y, 336, BTN_H);
-        pg.add(issueBtn);
+        issueBtn.setBounds(W-350, issueBtnY, 322, 42);
+        content.add(issueBtn);
 
-        // ── Bulk-select button actions ────────────────────────────
+        content.setPreferredSize(new Dimension(W, totalH));
+
+        int[] currentEvId = {-1};
+        boolean[] isClubArr = {false};
+
+        if (!isIncharge) {
+            boolean[] loading = {true};
+            loadEventsCombo(evCombo, () -> { loading[0] = false; });
+            evCombo.addActionListener(e -> {
+                if (loading[0]) return;
+                String sel = (String) evCombo.getSelectedItem();
+                if (sel == null || sel.startsWith("--")) {
+                    model.setRowCount(0); currentEvId[0] = -1;
+                    infoLbl.setForeground(TEXT_MUTED); infoLbl.setText("Select an event to view participants"); return;
+                }
+                try {
+                    int evId = Integer.parseInt(sel.split("\\|")[0].trim());
+                    currentEvId[0] = evId; isClubArr[0] = sel.contains("[Club]");
+                    model.setRowCount(0);
+                    infoLbl.setForeground(TEXT_MUTED); infoLbl.setText("Loading participants…");
+                    loadCertificateParticipants(evId, isClubArr[0], (String)typeCombo.getSelectedItem(), model, infoLbl);
+                } catch (Exception ex) { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Error: "+ex.getMessage()); }
+            });
+        } else {
+            evCombo.addActionListener(e -> {
+                String sel = (String) evCombo.getSelectedItem();
+                if (sel == null || sel.startsWith("--")) {
+                    model.setRowCount(0); currentEvId[0] = -1;
+                    infoLbl.setForeground(TEXT_MUTED); infoLbl.setText("Select a club and event to view participants"); return;
+                }
+                try {
+                    int evId = Integer.parseInt(sel.split("\\|")[0].trim());
+                    currentEvId[0] = evId; isClubArr[0] = true;
+                    model.setRowCount(0);
+                    infoLbl.setForeground(TEXT_MUTED); infoLbl.setText("Loading participants…");
+                    loadCertificateParticipants(evId, true, (String)typeCombo.getSelectedItem(), model, infoLbl);
+                } catch (Exception ex) { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Error: "+ex.getMessage()); }
+            });
+        }
+
+        typeCombo.addActionListener(e -> {
+            if (currentEvId[0] < 0) return;
+            model.setRowCount(0);
+            infoLbl.setForeground(TEXT_MUTED); infoLbl.setText("Reloading for selected type…");
+            loadCertificateParticipants(currentEvId[0], isClubArr[0], (String)typeCombo.getSelectedItem(), model, infoLbl);
+        });
+
         selAllBtn.addActionListener(e -> {
             if (table.isEditing()) table.getCellEditor().stopCellEditing();
-            for (int i = 0; i < model.getRowCount(); i++) model.setValueAt(true, i, 7);
+            for (int i = 0; i < model.getRowCount(); i++)
+                if (!"Yes".equals(model.getValueAt(i, 7))) model.setValueAt(true, i, 8);
         });
         deselAllBtn.addActionListener(e -> {
             if (table.isEditing()) table.getCellEditor().stopCellEditing();
-            for (int i = 0; i < model.getRowCount(); i++) model.setValueAt(false, i, 7);
+            for (int i = 0; i < model.getRowCount(); i++) model.setValueAt(false, i, 8);
         });
         selEligibleBtn.addActionListener(e -> {
             if (table.isEditing()) table.getCellEditor().stopCellEditing();
@@ -1194,71 +1610,41 @@ public class StaffDashboard extends JFrame {
             for (int i = 0; i < model.getRowCount(); i++) {
                 Object attVal = model.getValueAt(i, 6);
                 boolean present = "Present".equalsIgnoreCase(attVal == null ? "" : attVal.toString());
-                model.setValueAt(present, i, 7);
-                if (present) selected++;
+                boolean alreadyIssued = "Yes".equals(model.getValueAt(i, 7));
+                boolean tick = present && !alreadyIssued;
+                model.setValueAt(tick, i, 8);
+                if (tick) selected++;
             }
             infoLbl.setForeground(selected > 0 ? SUCCESS_COL : new Color(255, 160, 60));
             infoLbl.setText(selected > 0
                 ? "✓ " + selected + " eligible student(s) selected — click Issue to confirm."
-                : "⚠ No Present students found. Mark attendance first.");
+                : "⚠ No new eligible students found.");
         });
 
-        // ── Load events combo with loading flag ───────────────────
-        boolean[] loading       = {true};
-        int[]     currentEvId   = {-1};
-        boolean[] isClubArr     = {false};
-
-        loadEventsCombo(evCombo, () -> { loading[0] = false; });
-
-        evCombo.addActionListener(e -> {
-            if (loading[0]) return;
-            String sel = (String) evCombo.getSelectedItem();
-            if (sel == null || sel.startsWith("--")) {
-                model.setRowCount(0);
-                currentEvId[0] = -1;
-                infoLbl.setForeground(TEXT_MUTED);
-                infoLbl.setText("Select an event to view participants");
-                return;
-            }
-            try {
-                int evId = Integer.parseInt(sel.split("\\|")[0].trim());
-                currentEvId[0]  = evId;
-                isClubArr[0]    = sel.contains("[Club]");
-                model.setRowCount(0);
-                infoLbl.setForeground(TEXT_MUTED);
-                infoLbl.setText("Loading participants…");
-                loadCertificateParticipants(evId, isClubArr[0], model, infoLbl);
-            } catch (Exception ex) {
-                infoLbl.setForeground(ERROR_COL);
-                infoLbl.setText("Error: " + ex.getMessage());
-            }
+        refreshBtn.addActionListener(e -> {
+            if (currentEvId[0] < 0) return;
+            model.setRowCount(0);
+            infoLbl.setForeground(TEXT_MUTED); infoLbl.setText("Refreshing…");
+            loadCertificateParticipants(currentEvId[0], isClubArr[0], (String)typeCombo.getSelectedItem(), model, infoLbl);
         });
 
-        // ── Issue button ──────────────────────────────────────────
         issueBtn.addActionListener(e -> {
-            if (currentEvId[0] < 0) {
-                infoLbl.setForeground(ERROR_COL);
-                infoLbl.setText("Select an event first.");
-                return;
-            }
+            if (currentEvId[0] < 0) { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Select an event first."); return; }
             if (table.isEditing()) table.getCellEditor().stopCellEditing();
-
             String certType = (String) typeCombo.getSelectedItem();
             java.util.List<Integer> selected = new java.util.ArrayList<>();
             for (int i = 0; i < model.getRowCount(); i++)
-                if (Boolean.TRUE.equals(model.getValueAt(i, 7)))
+                if (Boolean.TRUE.equals(model.getValueAt(i, 8)) && !"Yes".equals(model.getValueAt(i, 7)))
                     selected.add((Integer) model.getValueAt(i, 0));
-
             if (selected.isEmpty()) {
-                infoLbl.setForeground(ERROR_COL);
-                infoLbl.setText("Tick at least one student in the 'Issue ✓' column.");
-                return;
+                infoLbl.setForeground(ERROR_COL); infoLbl.setText("Tick at least one student (🔒 = already issued)."); return;
             }
-
-            infoLbl.setForeground(TEXT_MUTED);
-            infoLbl.setText("Issuing " + selected.size() + " certificate(s)…");
+            infoLbl.setForeground(TEXT_MUTED); infoLbl.setText("Issuing " + selected.size() + " certificate(s)…");
             issueBtn.setEnabled(false);
-            issueCertificates(currentEvId[0], selected, certType, infoLbl, issueBtn);
+            issueCertificates(currentEvId[0], selected, certType, infoLbl, issueBtn, () -> {
+                model.setRowCount(0);
+                loadCertificateParticipants(currentEvId[0], isClubArr[0], certType, model, infoLbl);
+            });
         });
     }
 
@@ -1269,32 +1655,26 @@ public class StaffDashboard extends JFrame {
         int slot = isIncharge ? 8 : 6;
         JPanel pg = pages[slot];
         int W = scr.width - SIDEBAR_W_PX, H = scr.height - TOP_H;
-        pg.removeAll();
-        pageTitle(pg, "My Attendance", W);
+        JPanel content = createScrollablePage(pg, W, H);
+
+        pageTitle(content, "My Attendance", W);
 
         String[] cols = {"Date","Event Name","Type","Status"};
         DefaultTableModel model = noEditModel(cols);
         JTable table = new JTable(model);
         styleTable(table);
-        table.setRowHeight(36);
+        table.setRowHeight(34);
 
         table.getColumn("Status").setCellRenderer(new DefaultTableCellRenderer() {
-            @Override public Component getTableCellRendererComponent(
-                    JTable t, Object v, boolean sel, boolean foc, int row, int col) {
+            @Override public Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean foc, int row, int col) {
                 JLabel lbl = (JLabel) super.getTableCellRendererComponent(t, v, sel, foc, row, col);
                 String s = v == null ? "" : v.toString();
-                if ("Present".equalsIgnoreCase(s)) {
-                    lbl.setForeground(SUCCESS_COL); lbl.setText("✓  Present");
-                } else if ("Absent".equalsIgnoreCase(s)) {
-                    lbl.setForeground(ERROR_COL); lbl.setText("✗  Absent");
-                } else {
-                    lbl.setForeground(new Color(255,180,60)); lbl.setText("—  "+s);
-                }
+                if ("Present".equalsIgnoreCase(s)) { lbl.setForeground(SUCCESS_COL); lbl.setText("✓  Present"); }
+                else if ("Absent".equalsIgnoreCase(s)) { lbl.setForeground(ERROR_COL); lbl.setText("✗  Absent"); }
+                else { lbl.setForeground(new Color(255,180,60)); lbl.setText("—  "+s); }
                 lbl.setFont(new Font("SansSerif", Font.BOLD, 13));
-                lbl.setBackground(sel ? new Color(100,50,200,120)
-                    : row%2==0 ? new Color(12,6,30) : new Color(20,10,45));
-                lbl.setOpaque(true); lbl.setBorder(new EmptyBorder(0,12,0,12));
-                return lbl;
+                lbl.setBackground(sel ? new Color(100,50,200,120) : row%2==0 ? new Color(12,6,30) : new Color(20,10,45));
+                lbl.setOpaque(true); lbl.setBorder(new EmptyBorder(0,12,0,12)); return lbl;
             }
         });
 
@@ -1304,9 +1684,12 @@ public class StaffDashboard extends JFrame {
         table.getColumn("Date")      .setPreferredWidth(110);
 
         JButton refreshBtn = buildButton("↻ Refresh", false);
-        refreshBtn.setBounds(W-130, 18, 110, 32); pg.add(refreshBtn);
+        refreshBtn.setBounds(W-130, 18, 110, 32);
+        content.add(refreshBtn);
 
-        pg.add(spAt(styledTableScroll(table), 24, 72, W-48, H-100));
+        int tableH = 500;
+        content.add(spAt(styledTableScroll(table), 24, 72, W-48, tableH));
+        content.setPreferredSize(new Dimension(W, 72 + tableH + 20));
 
         Runnable loader = () -> {
             model.setRowCount(0);
@@ -1314,15 +1697,12 @@ public class StaffDashboard extends JFrame {
                 try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
                     PreparedStatement ps = con.prepareStatement(
                         "SELECT sa.attendance_date, se.event_title, se.event_type, sa.attendance_status " +
-                        "FROM student_attendance sa " +
-                        "JOIN staff_event se ON sa.event_id = se.event_id " +
+                        "FROM student_attendance sa JOIN staff_event se ON sa.event_id = se.event_id " +
                         "WHERE sa.user_id = ? " +
                         "UNION ALL " +
                         "SELECT sa.attendance_date, e.event_title, 'Club Event', sa.attendance_status " +
-                        "FROM student_attendance sa " +
-                        "JOIN event e ON sa.event_id = e.event_id " +
-                        "WHERE sa.user_id = ? " +
-                        "ORDER BY 1 DESC");
+                        "FROM student_attendance sa JOIN event e ON sa.event_id = e.event_id " +
+                        "WHERE sa.user_id = ? ORDER BY 1 DESC");
                     ps.setInt(1, userId); ps.setInt(2, userId);
                     ResultSet rs = ps.executeQuery();
                     while (rs.next()) {
@@ -1330,8 +1710,7 @@ public class StaffDashboard extends JFrame {
                         SwingUtilities.invokeLater(() -> model.addRow(row));
                     }
                 } catch (SQLException ex) {
-                    SwingUtilities.invokeLater(() ->
-                        model.addRow(new Object[]{"—", "Error: "+ex.getMessage(), "—", "—"}));
+                    SwingUtilities.invokeLater(() -> model.addRow(new Object[]{"—", "Error: "+ex.getMessage(), "—", "—"}));
                 }
             }).start();
         };
@@ -1340,42 +1719,342 @@ public class StaffDashboard extends JFrame {
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  COMBO LOADER
+    //  PAGE 8 (INCHARGE ONLY) — LEAVE REQUESTS
+    // ══════════════════════════════════════════════════════════════
+    private void buildLeaveRequestsPage(Dimension scr) {
+        int slot = 8;
+        JPanel pg = pages[slot];
+        int W = scr.width - SIDEBAR_W_PX, H = scr.height - TOP_H;
+        JPanel content = createScrollablePage(pg, W, H);
+
+        pageTitle(content, "Student Leave Requests", W);
+
+        JPanel banner = glassCard();
+        banner.setBounds(24, 66, W-48, 36);
+        content.add(banner);
+        JLabel bannerLbl = makeLabel(
+            "ℹ  Approve to remove the student from the club. Reject to keep them. Students must always remain in at least 1 club.",
+            new Font("SansSerif", Font.PLAIN, 12), WARN_COL);
+        bannerLbl.setBounds(14, 10, W-76, 18);
+        banner.add(bannerLbl);
+
+        JToggleButton showPending = new JToggleButton("⏳ Pending");
+        JToggleButton showAll     = new JToggleButton("📋 All History");
+        styleToggleBtn(showPending, true);
+        styleToggleBtn(showAll, false);
+        showPending.setBounds(24, 110, 140, 30); content.add(showPending);
+        showAll    .setBounds(172, 110, 160, 30); content.add(showAll);
+
+        JButton refreshBtn = buildButton("↻ Refresh", false);
+        refreshBtn.setBounds(W-130, 18, 110, 32);
+        content.add(refreshBtn);
+
+        JLabel statusLbl = makeLabel("", new Font("SansSerif", Font.BOLD, 13), SUCCESS_COL);
+        statusLbl.setBounds(24, 148, W-48, 20);
+        content.add(statusLbl);
+
+        String[] cols = {"Req ID","Student Name","Reg No","Club Name","Requested On","Status","Approve","Reject"};
+        DefaultTableModel model = new DefaultTableModel(cols, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return c == 6 || c == 7; }
+        };
+        JTable table = new JTable(model);
+        styleTable(table);
+        table.setRowHeight(40);
+
+        table.getColumn("Status").setCellRenderer(new DefaultTableCellRenderer() {
+            @Override public Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean foc, int row, int col) {
+                JLabel lbl = (JLabel) super.getTableCellRendererComponent(t, v, sel, foc, row, col);
+                String s = v == null ? "—" : v.toString();
+                switch (s) {
+                    case "Pending"  -> { lbl.setForeground(WARN_COL);    lbl.setText("⏳ Pending"); }
+                    case "Approved" -> { lbl.setForeground(SUCCESS_COL); lbl.setText("✓ Approved"); }
+                    case "Rejected" -> { lbl.setForeground(ERROR_COL);   lbl.setText("✗ Rejected"); }
+                    default         -> { lbl.setForeground(TEXT_MUTED); }
+                }
+                lbl.setFont(new Font("SansSerif", Font.BOLD, 12));
+                lbl.setBackground(sel ? new Color(100,50,200,120) : row%2==0 ? new Color(12,6,30) : new Color(20,10,45));
+                lbl.setOpaque(true); lbl.setBorder(new EmptyBorder(0,10,0,10)); return lbl;
+            }
+        });
+
+        table.getColumn("Approve").setCellRenderer(new TableCellRenderer() {
+            @Override public Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean foc, int row, int col) {
+                String status = (String) t.getValueAt(row, 5);
+                if ("Pending".equals(status)) {
+                    JButton btn = buildButton("✓ Approve", true);
+                    btn.setFont(new Font("Georgia", Font.BOLD, 11)); return btn;
+                }
+                JLabel done = makeLabel("—", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+                done.setHorizontalAlignment(SwingConstants.CENTER); done.setOpaque(true);
+                done.setBackground(row%2==0 ? new Color(12,6,30) : new Color(20,10,45)); return done;
+            }
+        });
+        table.getColumn("Approve").setCellEditor(new DefaultCellEditor(new JCheckBox()) {
+            @Override public Component getTableCellEditorComponent(JTable t, Object v, boolean sel, int row, int col) {
+                String status = (String) t.getValueAt(row, 5);
+                if (!"Pending".equals(status)) { fireEditingStopped(); return new JLabel("—"); }
+                JButton btn = buildButton("✓ Approve", true);
+                btn.setFont(new Font("Georgia", Font.BOLD, 11));
+                btn.addActionListener(e -> {
+                    fireEditingStopped();
+                    int reqId  = (Integer) t.getValueAt(row, 0);
+                    int stuId  = getUserIdForRequest(reqId);
+                    int clubId = getClubIdForRequest(reqId);
+                    approveLeaveRequest(reqId, stuId, clubId, (String)t.getValueAt(row,1), (String)t.getValueAt(row,3), model, statusLbl);
+                });
+                return btn;
+            }
+            @Override public Object getCellEditorValue() { return ""; }
+        });
+
+        table.getColumn("Reject").setCellRenderer(new TableCellRenderer() {
+            @Override public Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean foc, int row, int col) {
+                String status = (String) t.getValueAt(row, 5);
+                if ("Pending".equals(status)) {
+                    JButton btn = buildButton("✗ Reject", false);
+                    btn.setFont(new Font("Georgia", Font.BOLD, 11)); return btn;
+                }
+                JLabel done = makeLabel("—", new Font("SansSerif", Font.PLAIN, 12), TEXT_MUTED);
+                done.setHorizontalAlignment(SwingConstants.CENTER); done.setOpaque(true);
+                done.setBackground(row%2==0 ? new Color(12,6,30) : new Color(20,10,45)); return done;
+            }
+        });
+        table.getColumn("Reject").setCellEditor(new DefaultCellEditor(new JCheckBox()) {
+            @Override public Component getTableCellEditorComponent(JTable t, Object v, boolean sel, int row, int col) {
+                String status = (String) t.getValueAt(row, 5);
+                if (!"Pending".equals(status)) { fireEditingStopped(); return new JLabel("—"); }
+                JButton btn = buildButton("✗ Reject", false);
+                btn.setFont(new Font("Georgia", Font.BOLD, 11));
+                btn.addActionListener(e -> {
+                    fireEditingStopped();
+                    int reqId = (Integer) t.getValueAt(row, 0);
+                    rejectLeaveRequest(reqId, (String)t.getValueAt(row,1), (String)t.getValueAt(row,3), model, statusLbl);
+                });
+                return btn;
+            }
+            @Override public Object getCellEditorValue() { return ""; }
+        });
+
+        table.getColumn("Req ID")       .setPreferredWidth(60);
+        table.getColumn("Student Name") .setPreferredWidth(190);
+        table.getColumn("Reg No")       .setPreferredWidth(100);
+        table.getColumn("Club Name")    .setPreferredWidth(170);
+        table.getColumn("Requested On") .setPreferredWidth(110);
+        table.getColumn("Status")       .setPreferredWidth(110);
+        table.getColumn("Approve")      .setPreferredWidth(110);
+        table.getColumn("Reject")       .setPreferredWidth(100);
+
+        int tableH = 500;
+        content.add(spAt(styledTableScroll(table), 24, 174, W-48, tableH));
+        content.setPreferredSize(new Dimension(W, 174 + tableH + 20));
+
+        boolean[] showingPending = {true};
+        Runnable loader = () -> {
+            model.setRowCount(0);
+            statusLbl.setText("");
+            loadLeaveRequests(model, showingPending[0]);
+        };
+
+        showPending.addActionListener(e -> {
+            if (!showingPending[0]) {
+                showingPending[0] = true;
+                styleToggleBtn(showPending, true); styleToggleBtn(showAll, false);
+                loader.run();
+            }
+        });
+        showAll.addActionListener(e -> {
+            if (showingPending[0]) {
+                showingPending[0] = false;
+                styleToggleBtn(showPending, false); styleToggleBtn(showAll, true);
+                loader.run();
+            }
+        });
+
+        refreshBtn.addActionListener(e -> loader.run());
+        loader.run();
+    }
+
+    private void styleToggleBtn(JToggleButton btn, boolean active) {
+        btn.setBackground(active ? new Color(130, 60, 255, 180) : new Color(255, 255, 255, 18));
+        btn.setForeground(active ? Color.WHITE : TEXT_MUTED);
+        btn.setFont(new Font("Georgia", Font.BOLD, 12));
+        btn.setBorderPainted(false); btn.setFocusPainted(false);
+        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+    }
+
+    private void loadLeaveRequests(DefaultTableModel model, boolean pendingOnly) {
+        new Thread(() -> {
+            try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+                String sql =
+                    "SELECT clr.request_id, u.name, NVL(s.reg_num,'—'), c.club_name, " +
+                    "       clr.request_date, clr.status " +
+                    "FROM club_leave_request clr " +
+                    "JOIN users u ON clr.user_id = u.user_id " +
+                    "LEFT JOIN student s ON clr.user_id = s.user_id " +
+                    "JOIN club c ON clr.club_id = c.club_id " +
+                    "JOIN members_in mi ON mi.club_id = clr.club_id " +
+                    "WHERE mi.user_id = ? AND mi.role_type = 'staff_incharge' " +
+                    (pendingOnly ? "AND clr.status = 'Pending' " : "") +
+                    "ORDER BY clr.request_date DESC";
+                PreparedStatement ps = con.prepareStatement(sql);
+                ps.setInt(1, userId);
+                ResultSet rs = ps.executeQuery();
+                java.util.List<Object[]> rows = new java.util.ArrayList<>();
+                while (rs.next())
+                    rows.add(new Object[]{ rs.getInt(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getDate(5), rs.getString(6), "", "" });
+                SwingUtilities.invokeLater(() -> {
+                    for (Object[] row : rows) model.addRow(row);
+                    if (rows.isEmpty())
+                        model.addRow(new Object[]{"—", pendingOnly?"No pending leave requests":"No leave requests found","—","—","—","—","",""});
+                    updateLeaveRequestBadge();
+                });
+            } catch (SQLException ex) {
+                SwingUtilities.invokeLater(() -> model.addRow(new Object[]{"—","Error: "+ex.getMessage(),"—","—","—","—","",""}));
+            }
+        }).start();
+    }
+
+    private int getUserIdForRequest(int reqId) {
+        try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+            PreparedStatement ps = con.prepareStatement("SELECT user_id FROM club_leave_request WHERE request_id = ?");
+            ps.setInt(1, reqId); ResultSet rs = ps.executeQuery();
+            if (rs.next()) return rs.getInt(1);
+        } catch (SQLException ignored) {}
+        return -1;
+    }
+
+    private int getClubIdForRequest(int reqId) {
+        try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+            PreparedStatement ps = con.prepareStatement("SELECT club_id FROM club_leave_request WHERE request_id = ?");
+            ps.setInt(1, reqId); ResultSet rs = ps.executeQuery();
+            if (rs.next()) return rs.getInt(1);
+        } catch (SQLException ignored) {}
+        return -1;
+    }
+
+    private void approveLeaveRequest(int reqId, int studentUserId, int clubId,
+                                      String stuName, String clubName,
+                                      DefaultTableModel model, JLabel statusLbl) {
+        int confirm = JOptionPane.showConfirmDialog(this,
+            "<html>Approve leave for <b>" + stuName + "</b> from <b>" + clubName + "</b>?<br><br>" +
+            "This will <b>permanently remove</b> them from the club.</html>",
+            "Confirm Approval", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (confirm != JOptionPane.YES_OPTION) return;
+
+        new Thread(() -> {
+            Connection con = null;
+            try {
+                con = DriverManager.getConnection(dbUrl, dbUser, dbPass);
+                con.setAutoCommit(false);
+                PreparedStatement clubCountPs = con.prepareStatement("SELECT COUNT(*) FROM members_in WHERE user_id = ?");
+                clubCountPs.setInt(1, studentUserId);
+                ResultSet ccRs = clubCountPs.executeQuery();
+                int clubCount = ccRs.next() ? ccRs.getInt(1) : 0;
+                if (clubCount <= 1) {
+                    con.rollback();
+                    SwingUtilities.invokeLater(() -> {
+                        statusLbl.setForeground(ERROR_COL);
+                        statusLbl.setText("Cannot approve — " + stuName + " must remain in at least 1 club.");
+                        JOptionPane.showMessageDialog(this,
+                            "<html><b>" + stuName + "</b> is only a member of 1 club.<br>Cannot remove.</html>",
+                            "Cannot Approve", JOptionPane.WARNING_MESSAGE);
+                    });
+                    return;
+                }
+                PreparedStatement updatePs = con.prepareStatement(
+                    "UPDATE club_leave_request SET status='Approved', handled_by=?, handled_date=SYSDATE WHERE request_id=?");
+                updatePs.setInt(1, userId); updatePs.setInt(2, reqId); updatePs.executeUpdate();
+                PreparedStatement deletePs = con.prepareStatement("DELETE FROM members_in WHERE user_id=? AND club_id=?");
+                deletePs.setInt(1, studentUserId); deletePs.setInt(2, clubId); deletePs.executeUpdate();
+                con.commit();
+                SwingUtilities.invokeLater(() -> {
+                    statusLbl.setForeground(SUCCESS_COL);
+                    statusLbl.setText("✅ Approved — " + stuName + " removed from " + clubName + ".");
+                    model.setRowCount(0); loadLeaveRequests(model, true); updateLeaveRequestBadge();
+                });
+            } catch (SQLException ex) {
+                if (con != null) try { con.rollback(); } catch (SQLException ignored) {}
+                SwingUtilities.invokeLater(() -> { statusLbl.setForeground(ERROR_COL); statusLbl.setText("Error: " + ex.getMessage().substring(0, Math.min(80, ex.getMessage().length()))); });
+            } finally {
+                if (con != null) try { con.setAutoCommit(true); con.close(); } catch (SQLException ignored) {}
+            }
+        }).start();
+    }
+
+    private void rejectLeaveRequest(int reqId, String stuName, String clubName,
+                                     DefaultTableModel model, JLabel statusLbl) {
+        int confirm = JOptionPane.showConfirmDialog(this,
+            "<html>Reject the leave request from <b>" + stuName + "</b> for <b>" + clubName + "</b>?</html>",
+            "Confirm Rejection", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+        if (confirm != JOptionPane.YES_OPTION) return;
+        new Thread(() -> {
+            try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+                PreparedStatement ps = con.prepareStatement(
+                    "UPDATE club_leave_request SET status='Rejected', handled_by=?, handled_date=SYSDATE WHERE request_id=?");
+                ps.setInt(1, userId); ps.setInt(2, reqId); ps.executeUpdate();
+                SwingUtilities.invokeLater(() -> {
+                    statusLbl.setForeground(WARN_COL);
+                    statusLbl.setText("✗ Rejected — " + stuName + " will remain in " + clubName + ".");
+                    model.setRowCount(0); loadLeaveRequests(model, true); updateLeaveRequestBadge();
+                });
+            } catch (SQLException ex) {
+                SwingUtilities.invokeLater(() -> { statusLbl.setForeground(ERROR_COL); statusLbl.setText("Error: " + ex.getMessage().substring(0, Math.min(80, ex.getMessage().length()))); });
+            }
+        }).start();
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  COMBO LOADERS
     // ══════════════════════════════════════════════════════════════
     private void loadEventsCombo(JComboBox<String> combo, Runnable onDone) {
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
                 DefaultComboBoxModel<String> m = new DefaultComboBoxModel<>();
                 m.addElement("-- Select Event --");
-                PreparedStatement ps1 = con.prepareStatement(
-                	    "SELECT se.event_id, se.event_title, se.event_type " +
-                	    "FROM staff_event se " +
-                	    "WHERE se.organiser_id = ? " +
-                	    "OR se.event_id IN (SELECT event_id FROM staff_event_registration WHERE user_id = ?) " +
-                	    "ORDER BY se.start_date DESC");
-                	ps1.setInt(1, userId);
-                	ps1.setInt(2, userId);
-                	ResultSet rs1 = ps1.executeQuery();
-                while (rs1.next())
-                    m.addElement(rs1.getInt(1)+" | "+rs1.getString(2)+" ("+rs1.getString(3)+") [Staff]");
-                PreparedStatement ps2 = con.prepareStatement(
-                    "SELECT e.event_id, e.event_title, c.club_name " +
-                    "FROM event e JOIN club c ON e.club_id=c.club_id " +
-                    "WHERE c.club_id IN (SELECT club_id FROM members_in WHERE user_id=? AND role_type='staff_incharge') " +
-                    "ORDER BY e.start_date DESC");
-                ps2.setInt(1, userId); ResultSet rs2 = ps2.executeQuery();
-                while (rs2.next())
-                    m.addElement(rs2.getInt(1)+" | "+rs2.getString(2)+" ("+rs2.getString(3)+") [Club]");
-                SwingUtilities.invokeLater(() -> {
-                    combo.setModel(m);
-                    if (onDone != null) onDone.run();
-                });
+                if (isIncharge) {
+                    PreparedStatement ps1 = con.prepareStatement(
+                        "SELECT se.event_id, se.event_title, se.event_type FROM staff_event se WHERE se.organiser_id=? ORDER BY se.start_date DESC");
+                    ps1.setInt(1, userId); ResultSet rs1 = ps1.executeQuery();
+                    while (rs1.next()) m.addElement(rs1.getInt(1)+" | "+rs1.getString(2)+" ("+rs1.getString(3)+") [Staff]");
+                    PreparedStatement ps2 = con.prepareStatement(
+                        "SELECT e.event_id, e.event_title, c.club_name FROM event e JOIN club c ON e.club_id=c.club_id " +
+                        "WHERE c.club_id IN (SELECT club_id FROM members_in WHERE user_id=? AND role_type='staff_incharge') ORDER BY e.start_date DESC");
+                    ps2.setInt(1, userId); ResultSet rs2 = ps2.executeQuery();
+                    while (rs2.next()) m.addElement(rs2.getInt(1)+" | "+rs2.getString(2)+" ("+rs2.getString(3)+") [Club]");
+                } else {
+                    PreparedStatement ps1 = con.prepareStatement(
+                        "SELECT se.event_id, se.event_title, se.event_type FROM staff_event se " +
+                        "WHERE se.event_id IN (SELECT event_id FROM staff_event_registration WHERE user_id=?) ORDER BY se.start_date DESC");
+                    ps1.setInt(1, userId); ResultSet rs1 = ps1.executeQuery();
+                    while (rs1.next()) m.addElement(rs1.getInt(1)+" | "+rs1.getString(2)+" ("+rs1.getString(3)+") [Staff]");
+                }
+                SwingUtilities.invokeLater(() -> { combo.setModel(m); if (onDone != null) onDone.run(); });
             } catch (SQLException ex) {
-                SwingUtilities.invokeLater(() -> {
-                    combo.removeAllItems();
-                    combo.addItem("-- Error loading events --");
-                    if (onDone != null) onDone.run();
-                });
+                SwingUtilities.invokeLater(() -> { combo.removeAllItems(); combo.addItem("-- Error loading events --"); if (onDone != null) onDone.run(); });
+            }
+        }).start();
+    }
+
+    private void loadEventsForClub(int clubId, JComboBox<String> combo) {
+        combo.removeAllItems(); combo.addItem("-- Loading events --");
+        new Thread(() -> {
+            try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+                PreparedStatement verify = con.prepareStatement(
+                    "SELECT COUNT(*) FROM members_in WHERE user_id=? AND club_id=? AND role_type='staff_incharge'");
+                verify.setInt(1, userId); verify.setInt(2, clubId);
+                ResultSet vr = verify.executeQuery();
+                if (!vr.next() || vr.getInt(1) == 0) {
+                    SwingUtilities.invokeLater(() -> { combo.removeAllItems(); combo.addItem("-- Access denied --"); }); return;
+                }
+                PreparedStatement ps = con.prepareStatement(
+                    "SELECT e.event_id, e.event_title FROM event e WHERE e.club_id=? ORDER BY e.start_date DESC");
+                ps.setInt(1, clubId); ResultSet rs = ps.executeQuery();
+                DefaultComboBoxModel<String> m = new DefaultComboBoxModel<>();
+                m.addElement("-- Select Event --");
+                while (rs.next()) m.addElement(rs.getInt(1)+" | "+rs.getString(2));
+                SwingUtilities.invokeLater(() -> combo.setModel(m));
+            } catch (SQLException ex) {
+                SwingUtilities.invokeLater(() -> { combo.removeAllItems(); combo.addItem("-- Error loading events --"); });
             }
         }).start();
     }
@@ -1387,15 +2066,13 @@ public class StaffDashboard extends JFrame {
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
                 PreparedStatement ps = con.prepareStatement(
-                    "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(s.year,0),"+
-                    "NVL(s.section,'—'),u.email,r.reg_date,'Registered' "+
-                    "FROM registers r JOIN users u ON r.user_id=u.user_id "+
-                    "LEFT JOIN student s ON r.user_id=s.user_id "+
-                    "WHERE r.event_id=? ORDER BY u.name");
+                    "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(s.year,0)," +
+                    "NVL(s.section,'—'),u.email,r.reg_date,'Registered' " +
+                    "FROM registers r JOIN users u ON r.user_id=u.user_id " +
+                    "LEFT JOIN student s ON r.user_id=s.user_id WHERE r.event_id=? ORDER BY u.name");
                 ps.setInt(1, eventId); ResultSet rs = ps.executeQuery();
                 while (rs.next()) {
-                    Object[] row={rs.getInt(1),rs.getString(2),rs.getString(3),
-                        rs.getInt(4),rs.getString(5),rs.getString(6),rs.getDate(7),rs.getString(8)};
+                    Object[] row={rs.getInt(1),rs.getString(2),rs.getString(3),rs.getInt(4),rs.getString(5),rs.getString(6),rs.getDate(7),rs.getString(8)};
                     SwingUtilities.invokeLater(()->model.addRow(row));
                 }
             } catch (SQLException ex) {
@@ -1407,17 +2084,14 @@ public class StaffDashboard extends JFrame {
     private void loadInternalParticipants(int eventId, DefaultTableModel model) {
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
-            	
                 PreparedStatement ps = con.prepareStatement(
-                    "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(s.year,0),"+
-                    "NVL(s.section,'—'),u.email,ser.reg_date,'Registered' "+
-                    "FROM staff_event_registration ser JOIN users u ON ser.user_id=u.user_id "+
-                    "LEFT JOIN student s ON ser.user_id=s.user_id "+
-                    "WHERE ser.event_id=? ORDER BY u.name");
+                    "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(s.year,0)," +
+                    "NVL(s.section,'—'),u.email,ser.reg_date,'Registered' " +
+                    "FROM staff_event_registration ser JOIN users u ON ser.user_id=u.user_id " +
+                    "LEFT JOIN student s ON ser.user_id=s.user_id WHERE ser.event_id=? ORDER BY u.name");
                 ps.setInt(1, eventId); ResultSet rs = ps.executeQuery();
                 while (rs.next()) {
-                    Object[] row={rs.getInt(1),rs.getString(2),rs.getString(3),
-                        rs.getInt(4),rs.getString(5),rs.getString(6),rs.getDate(7),rs.getString(8)};
+                    Object[] row={rs.getInt(1),rs.getString(2),rs.getString(3),rs.getInt(4),rs.getString(5),rs.getString(6),rs.getDate(7),rs.getString(8)};
                     SwingUtilities.invokeLater(()->model.addRow(row));
                 }
             } catch (SQLException ex) {
@@ -1430,187 +2104,142 @@ public class StaffDashboard extends JFrame {
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
                 PreparedStatement ps = con.prepareStatement(
-                    "SELECT u.user_id,u.name,eg.organisation_name,eg.role_type,u.phone,ser.reg_date "+
-                    "FROM staff_event_registration ser JOIN users u ON ser.user_id=u.user_id "+
-                    "JOIN external_guest eg ON ser.user_id=eg.user_id "+
-                    "WHERE ser.event_id=? ORDER BY u.name");
+                    "SELECT u.user_id,u.name,eg.organisation_name,eg.role_type,u.phone,ser.reg_date " +
+                    "FROM staff_event_registration ser JOIN users u ON ser.user_id=u.user_id " +
+                    "JOIN external_guest eg ON ser.user_id=eg.user_id WHERE ser.event_id=? ORDER BY u.name");
                 ps.setInt(1, eventId); ResultSet rs = ps.executeQuery();
                 while (rs.next()) {
-                    Object[] row={rs.getInt(1),rs.getString(2),rs.getString(3),
-                        rs.getString(4),rs.getString(5),rs.getDate(6)};
+                    Object[] row={rs.getInt(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getString(5),rs.getDate(6)};
                     SwingUtilities.invokeLater(()->model.addRow(row));
                 }
             } catch (SQLException ex) {}
         }).start();
     }
 
-    private void loadCertificateParticipants(int eventId, boolean isClub,
+    private void loadCertificateParticipants(int eventId, boolean isClub, String certType,
                                               DefaultTableModel model, JLabel infoLbl) {
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
+                if (isClub) {
+                    PreparedStatement verify = con.prepareStatement(
+                        "SELECT COUNT(*) FROM event e JOIN members_in mi ON e.club_id=mi.club_id " +
+                        "WHERE e.event_id=? AND mi.user_id=? AND mi.role_type='staff_incharge'");
+                    verify.setInt(1, eventId); verify.setInt(2, userId);
+                    ResultSet vRs = verify.executeQuery();
+                    if (!vRs.next() || vRs.getInt(1) == 0) {
+                        SwingUtilities.invokeLater(() -> { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Access denied."); }); return;
+                    }
+                } else {
+                    PreparedStatement verify = con.prepareStatement("SELECT COUNT(*) FROM staff_event WHERE event_id=? AND organiser_id=?");
+                    verify.setInt(1, eventId); verify.setInt(2, userId);
+                    ResultSet vRs = verify.executeQuery();
+                    if (!vRs.next() || vRs.getInt(1) == 0) {
+                        SwingUtilities.invokeLater(() -> { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Access denied."); }); return;
+                    }
+                }
 
-                // Check if attendance has been marked for this event
-                PreparedStatement attCheck = con.prepareStatement(
-                    "SELECT COUNT(*) FROM student_attendance WHERE event_id=?");
+                PreparedStatement attCheck = con.prepareStatement("SELECT COUNT(*) FROM student_attendance WHERE event_id=?");
                 attCheck.setInt(1, eventId);
                 ResultSet attRs = attCheck.executeQuery();
                 boolean attendanceMarked = attRs.next() && attRs.getInt(1) > 0;
 
                 java.util.List<Object[]> rows = new java.util.ArrayList<>();
+                String attSub = "NVL((SELECT sa.attendance_status FROM student_attendance sa WHERE sa.event_id=? AND sa.user_id=u.user_id),'Not Marked')";
+                String issuedSub = "NVL((SELECT 'Yes' FROM certificate cert WHERE cert.user_id=u.user_id AND cert.event_id=? AND cert.certificate_type=?),'No')";
 
                 if (!attendanceMarked) {
-                    // No attendance marked — show all registrants, unchecked
-                    String sql = isClub
-                        ? "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(TO_CHAR(s.year),'—'),NVL(s.section,'—')," +
-                          "u.email,'Not Marked Yet' " +
-                          "FROM registers r JOIN users u ON r.user_id=u.user_id " +
-                          "LEFT JOIN student s ON u.user_id=s.user_id " +
-                          "WHERE r.event_id=? ORDER BY u.name"
-                        : "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(TO_CHAR(s.year),'—'),NVL(s.section,'—')," +
-                          "u.email,'Not Marked Yet' " +
-                          "FROM staff_event_registration ser JOIN users u ON ser.user_id=u.user_id " +
-                          "LEFT JOIN student s ON u.user_id=s.user_id " +
-                          "WHERE ser.event_id=? ORDER BY u.name";
-                    PreparedStatement ps = con.prepareStatement(sql);
-                    ps.setInt(1, eventId);
+                    String regSql = isClub
+                        ? "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(TO_CHAR(s.year),'—'),NVL(s.section,'—'),u.email,'Not Marked Yet'," + issuedSub + " FROM registers r JOIN users u ON r.user_id=u.user_id LEFT JOIN student s ON u.user_id=s.user_id WHERE r.event_id=? ORDER BY u.name"
+                        : "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(TO_CHAR(s.year),'—'),NVL(s.section,'—'),u.email,'Not Marked Yet'," + issuedSub + " FROM staff_event_registration ser JOIN users u ON ser.user_id=u.user_id LEFT JOIN student s ON u.user_id=s.user_id WHERE ser.event_id=? ORDER BY u.name";
+                    PreparedStatement ps = con.prepareStatement(regSql);
+                    ps.setInt(1, eventId); ps.setString(2, certType); ps.setInt(3, eventId);
                     ResultSet rs = ps.executeQuery();
                     while (rs.next())
-                        rows.add(new Object[]{rs.getInt(1),rs.getString(2),rs.getString(3),
-                            rs.getString(4),rs.getString(5),rs.getString(6),rs.getString(7),false});
-
+                        rows.add(new Object[]{rs.getInt(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getString(5),rs.getString(6),rs.getString(7),rs.getString(8),false});
                     SwingUtilities.invokeLater(() -> {
                         for (Object[] r : rows) model.addRow(r);
-                        infoLbl.setForeground(new Color(255, 160, 60));
-                        infoLbl.setText("⚠ Attendance not marked yet — showing all " + rows.size() +
-                            " registrant(s). You can still issue certificates.");
+                        infoLbl.setForeground(new Color(255,160,60));
+                        infoLbl.setText("⚠ Attendance not marked — showing all "+rows.size()+" registrant(s). 🔒 = already issued.");
                     });
-
                 } else {
-                    // Attendance marked — show only Present students, pre-unchecked
                     String sql = isClub
-                        ? "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(TO_CHAR(s.year),'—'),NVL(s.section,'—')," +
-                          "u.email," +
-                          "NVL((SELECT sa.attendance_status FROM student_attendance sa " +
-                          "     WHERE sa.event_id=? AND sa.user_id=u.user_id),'Absent') " +
-                          "FROM registers r JOIN users u ON r.user_id=u.user_id " +
-                          "LEFT JOIN student s ON u.user_id=s.user_id " +
-                          "WHERE r.event_id=? " +
-                          "AND u.user_id IN (SELECT user_id FROM student_attendance " +
-                          "                  WHERE event_id=? AND attendance_status='Present') " +
-                          "ORDER BY u.name"
-                        : "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(TO_CHAR(s.year),'—'),NVL(s.section,'—')," +
-                          "u.email," +
-                          "NVL((SELECT sa.attendance_status FROM student_attendance sa " +
-                          "     WHERE sa.event_id=? AND sa.user_id=u.user_id),'Absent') " +
-                          "FROM staff_event_registration ser JOIN users u ON ser.user_id=u.user_id " +
-                          "LEFT JOIN student s ON u.user_id=s.user_id " +
-                          "WHERE ser.event_id=? " +
-                          "AND u.user_id IN (SELECT user_id FROM student_attendance " +
-                          "                  WHERE event_id=? AND attendance_status='Present') " +
-                          "ORDER BY u.name";
+                        ? "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(TO_CHAR(s.year),'—'),NVL(s.section,'—'),u.email," + attSub + "," + issuedSub + " FROM registers r JOIN users u ON r.user_id=u.user_id LEFT JOIN student s ON u.user_id=s.user_id WHERE r.event_id=? AND u.user_id IN (SELECT user_id FROM student_attendance WHERE event_id=? AND attendance_status='Present') ORDER BY u.name"
+                        : "SELECT u.user_id,u.name,NVL(s.reg_num,'—'),NVL(TO_CHAR(s.year),'—'),NVL(s.section,'—'),u.email," + attSub + "," + issuedSub + " FROM staff_event_registration ser JOIN users u ON ser.user_id=u.user_id LEFT JOIN student s ON u.user_id=s.user_id WHERE ser.event_id=? AND u.user_id IN (SELECT user_id FROM student_attendance WHERE event_id=? AND attendance_status='Present') ORDER BY u.name";
                     PreparedStatement ps = con.prepareStatement(sql);
-                    ps.setInt(1, eventId); ps.setInt(2, eventId); ps.setInt(3, eventId);
+                    ps.setInt(1, eventId); ps.setInt(2, eventId); ps.setString(3, certType); ps.setInt(4, eventId); ps.setInt(5, eventId);
                     ResultSet rs = ps.executeQuery();
                     while (rs.next())
-                        rows.add(new Object[]{rs.getInt(1),rs.getString(2),rs.getString(3),
-                            rs.getString(4),rs.getString(5),rs.getString(6),rs.getString(7),false});
-
+                        rows.add(new Object[]{rs.getInt(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getString(5),rs.getString(6),rs.getString(7),rs.getString(8),false});
                     SwingUtilities.invokeLater(() -> {
                         for (Object[] r : rows) model.addRow(r);
-                        if (rows.isEmpty()) {
-                            infoLbl.setForeground(new Color(255, 160, 60));
-                            infoLbl.setText("⚠ No Present students found. Check attendance has been saved.");
-                        } else {
-                            infoLbl.setForeground(SUCCESS_COL);
-                            infoLbl.setText("✅ " + rows.size() + " Present student(s) — tick and click Issue, or use '☑ Select Eligible'.");
-                        }
+                        long newCount = rows.stream().filter(r -> "No".equals(r[7])).count();
+                        long issuedCount = rows.stream().filter(r -> "Yes".equals(r[7])).count();
+                        if (rows.isEmpty()) { infoLbl.setForeground(new Color(255,160,60)); infoLbl.setText("⚠ No Present students found."); }
+                        else { infoLbl.setForeground(SUCCESS_COL); infoLbl.setText("✅ "+newCount+" eligible (🔒 "+issuedCount+" already issued) — select and click Issue."); }
                     });
                 }
-
             } catch (SQLException ex) {
-                SwingUtilities.invokeLater(() -> {
-                    infoLbl.setForeground(ERROR_COL);
-                    infoLbl.setText("Error: " + ex.getMessage());
-                });
+                SwingUtilities.invokeLater(() -> { infoLbl.setForeground(ERROR_COL); infoLbl.setText("Error: "+ex.getMessage()); });
             }
         }).start();
     }
 
-    // ── Issue certificates — with issueBtn re-enable ──────────────
     private void issueCertificates(int eventId, java.util.List<Integer> userIds,
-                                   String certType, JLabel infoLbl, JButton issueBtn) {
+                                   String certType, JLabel infoLbl, JButton issueBtn,
+                                   Runnable onComplete) {
         new Thread(() -> {
             try (Connection con = DriverManager.getConnection(dbUrl, dbUser, dbPass)) {
-                // Resolve event name (try staff_event first, then club event)
                 String eventName = "Event " + eventId;
-                PreparedStatement getSe = con.prepareStatement(
-                    "SELECT event_title FROM staff_event WHERE event_id=?");
-                getSe.setInt(1, eventId);
-                ResultSet seRs = getSe.executeQuery();
-                if (seRs.next()) {
-                    eventName = seRs.getString(1);
-                } else {
-                    PreparedStatement getCe = con.prepareStatement(
-                        "SELECT event_title FROM event WHERE event_id=?");
-                    getCe.setInt(1, eventId);
-                    ResultSet ceRs = getCe.executeQuery();
-                    if (ceRs.next()) eventName = ceRs.getString(1);
-                }
+                try {
+                    PreparedStatement getSe = con.prepareStatement("SELECT event_title FROM staff_event WHERE event_id=?");
+                    getSe.setInt(1, eventId); ResultSet seRs = getSe.executeQuery();
+                    if (seRs.next()) eventName = seRs.getString(1);
+                    else {
+                        PreparedStatement getCe = con.prepareStatement("SELECT event_title FROM event WHERE event_id=?");
+                        getCe.setInt(1, eventId); ResultSet ceRs = getCe.executeQuery();
+                        if (ceRs.next()) eventName = ceRs.getString(1);
+                    }
+                } catch (SQLException ignored) {}
 
                 int issued = 0, skipped = 0;
                 for (int uid : userIds) {
-                    // Skip if already issued same type
-                    PreparedStatement dupChk = con.prepareStatement(
-                        "SELECT COUNT(*) FROM certificate " +
-                        "WHERE user_id=? AND event_id=? AND certificate_type=?");
-                    dupChk.setInt(1, uid); dupChk.setInt(2, eventId);
-                    dupChk.setString(3, certType);
+                    PreparedStatement dupChk = con.prepareStatement("SELECT COUNT(*) FROM certificate WHERE user_id=? AND event_id=? AND certificate_type=?");
+                    dupChk.setInt(1, uid); dupChk.setInt(2, eventId); dupChk.setString(3, certType);
                     ResultSet dupRs = dupChk.executeQuery();
                     if (dupRs.next() && dupRs.getInt(1) > 0) { skipped++; continue; }
 
-                    // Get student name
-                    PreparedStatement nm = con.prepareStatement(
-                        "SELECT name FROM users WHERE user_id=?");
-                    nm.setInt(1, uid);
-                    ResultSet nmRs = nm.executeQuery();
+                    PreparedStatement nm = con.prepareStatement("SELECT name FROM users WHERE user_id=?");
+                    nm.setInt(1, uid); ResultSet nmRs = nm.executeQuery();
                     String studentName = nmRs.next() ? nmRs.getString(1) : "Student";
 
-                    // Insert certificate — use sequence-style MAX+1
                     PreparedStatement ins = con.prepareStatement(
-                        "INSERT INTO certificate(certificate_id,user_id,event_id,certificate_type," +
-                        "student_name,event_name,issue_date,template_used) " +
-                        "VALUES((SELECT NVL(MAX(certificate_id),0)+1 FROM certificate)," +
-                        "?,?,?,?,?,SYSDATE,'Default')");
-                    ins.setInt(1, uid);
-                    ins.setInt(2, eventId);
-                    ins.setString(3, certType);
-                    ins.setString(4, studentName);
-                    ins.setString(5, eventName);
-                    ins.executeUpdate();
+                        "INSERT INTO certificate(certificate_id,user_id,event_id,certificate_type,student_name,event_name,issue_date,template_used) " +
+                        "VALUES((SELECT NVL(MAX(certificate_id),0)+1 FROM certificate),?,?,?,?,?,SYSDATE,'Default')");
+                    ins.setInt(1, uid); ins.setInt(2, eventId); ins.setString(3, certType);
+                    ins.setString(4, studentName); ins.setString(5, eventName); ins.executeUpdate();
                     issued++;
                 }
 
                 final int fi = issued, fs = skipped;
                 SwingUtilities.invokeLater(() -> {
                     infoLbl.setForeground(SUCCESS_COL);
-                    infoLbl.setText("🎓 " + fi + " certificate(s) issued!" +
-                        (fs > 0 ? "  (" + fs + " already existed — skipped)" : ""));
+                    infoLbl.setText("🎓 "+fi+" certificate(s) issued!"+(fs>0?" ("+fs+" already existed — skipped)":""));
                     issueBtn.setEnabled(true);
+                    if (onComplete != null) onComplete.run();
                 });
-
             } catch (SQLException ex) {
                 SwingUtilities.invokeLater(() -> {
                     infoLbl.setForeground(ERROR_COL);
                     String msg = ex.getMessage() == null ? "Database error" : ex.getMessage();
-                    infoLbl.setText("Error: " + msg.substring(0, Math.min(80, msg.length())));
+                    infoLbl.setText("Error: "+msg.substring(0, Math.min(80, msg.length())));
                     issueBtn.setEnabled(true);
                 });
             }
         }).start();
     }
 
-    private void createClubEvent(String title,int clubId,String sd,String ed,String st,String et,
-            JLabel statusLbl,JTextField f1,JTextField f3,JTextField f4,JTextField f5,JTextField f6){
+    private void createClubEvent(String title, int clubId, String sd, String ed, String st, String et,
+            JLabel statusLbl, JTextField f1, JTextField f3, JTextField f4, JTextField f5, JTextField f6){
         new Thread(()->{
             try {
                 java.sql.Date.valueOf(sd); java.sql.Date.valueOf(ed);
@@ -1622,8 +2251,7 @@ public class StaffDashboard extends JFrame {
                     verify.setInt(1,clubId); verify.setInt(2,userId);
                     ResultSet vRs=verify.executeQuery();
                     if (!vRs.next()||vRs.getInt(1)==0){
-                        SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);
-                            statusLbl.setText("You are not assigned as staff_incharge for this club.");}); return;
+                        SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);statusLbl.setText("You are not assigned as staff_incharge for this club.");}); return;
                     }
                     ResultSet seq=con.createStatement().executeQuery("SELECT NVL(MAX(event_id),0)+1 FROM event");
                     int evId=seq.next()?seq.getInt(1):1;
@@ -1640,53 +2268,40 @@ public class StaffDashboard extends JFrame {
                         f1.setText(""); f3.setText(""); f4.setText(""); f5.setText(""); f6.setText("");});
                 }
             } catch (java.time.format.DateTimeParseException dpe){
-                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);
-                    statusLbl.setText("Invalid date/time format. Use YYYY-MM-DD and HH:MM");});
+                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);statusLbl.setText("Invalid date/time format. Use YYYY-MM-DD and HH:MM");});
             } catch (SQLException ex){
-                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);
-                    String msg=ex.getMessage()==null?"DB error":ex.getMessage();
-                    statusLbl.setText("Error: "+msg.substring(0,Math.min(60,msg.length())));});
+                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);String msg=ex.getMessage()==null?"DB error":ex.getMessage();statusLbl.setText("Error: "+msg.substring(0,Math.min(60,msg.length())));});
             } catch (Exception ex){
-                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);
-                    statusLbl.setText("Error: invalid date and time");});
+                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);statusLbl.setText("Error: invalid date and time");});
             }
         }).start();
     }
 
-    private void createStaffEvent(String title,String evType,int venueId,String sd,String ed,
-            String st,String et,String desc,JLabel statusLbl,
-            JTextField fTitle,JTextField typeField,JTextField fSd,JTextField fEd,
-            JTextField fSt,JTextField fEt,JTextArea fDesc){
+    private void createStaffEvent(String title, String evType, int venueId, String sd, String ed,
+            String st, String et, String desc, JLabel statusLbl,
+            JTextField fTitle, JTextField typeField, JTextField fSd, JTextField fEd,
+            JTextField fSt, JTextField fEt, JTextArea fDesc){
         new Thread(()->{
             try {
-                java.sql.Date.valueOf(sd); java.sql.Date.valueOf(ed);
-                LocalTime.parse(st); LocalTime.parse(et);
+                java.sql.Date.valueOf(sd); java.sql.Date.valueOf(ed); LocalTime.parse(st); LocalTime.parse(et);
                 try (Connection con=DriverManager.getConnection(dbUrl,dbUser,dbPass)){
                     ResultSet seq=con.createStatement().executeQuery("SELECT NVL(MAX(event_id),0)+1 FROM staff_event");
                     int evId=seq.next()?seq.getInt(1):1;
                     PreparedStatement ps=con.prepareStatement(
-                        "INSERT INTO staff_event(event_id,event_title,event_type,venue_id,"+
-                        "start_date,end_date,start_time,end_time,description,organiser_id) VALUES(?,?,?,?,?,?,?,?,?,?)");
-                    ps.setInt(1,evId);
-                    ps.setString(2,title.length()>100?title.substring(0,100):title);
-                    ps.setString(3,evType.length()>30?evType.substring(0,30):evType);
-                    ps.setInt(4,venueId);
+                        "INSERT INTO staff_event(event_id,event_title,event_type,venue_id,start_date,end_date,start_time,end_time,description,organiser_id) VALUES(?,?,?,?,?,?,?,?,?,?)");
+                    ps.setInt(1,evId); ps.setString(2,title.length()>100?title.substring(0,100):title);
+                    ps.setString(3,evType.length()>30?evType.substring(0,30):evType); ps.setInt(4,venueId);
                     ps.setDate(5,java.sql.Date.valueOf(sd)); ps.setDate(6,java.sql.Date.valueOf(ed));
-                    ps.setString(7,st); ps.setString(8,et);
-                    ps.setString(9,desc.length()>200?desc.substring(0,200):desc);
+                    ps.setString(7,st); ps.setString(8,et); ps.setString(9,desc.length()>200?desc.substring(0,200):desc);
                     ps.setInt(10,userId); ps.executeUpdate();
                     SwingUtilities.invokeLater(()->{statusLbl.setForeground(SUCCESS_COL);
                         statusLbl.setText("Staff event created! ID: "+evId);
-                        fTitle.setText(""); typeField.setText(""); fSd.setText(""); fEd.setText("");
-                        fSt.setText(""); fEt.setText(""); fDesc.setText("");});
+                        fTitle.setText(""); typeField.setText(""); fSd.setText(""); fEd.setText(""); fSt.setText(""); fEt.setText(""); fDesc.setText("");});
                 }
             } catch (java.time.format.DateTimeParseException dpe){
-                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);
-                    statusLbl.setText("Invalid date/time format. Use YYYY-MM-DD and HH:MM");});
+                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);statusLbl.setText("Invalid date/time format. Use YYYY-MM-DD and HH:MM");});
             } catch (Exception ex){
-                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);
-                    String msg=ex.getMessage()==null?"error":ex.getMessage();
-                    statusLbl.setText("Error: "+msg.substring(0,Math.min(60,msg.length())));});
+                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);String msg=ex.getMessage()==null?"error":ex.getMessage();statusLbl.setText("Error: "+msg.substring(0,Math.min(60,msg.length())));});
             }
         }).start();
     }
@@ -1695,8 +2310,7 @@ public class StaffDashboard extends JFrame {
         new Thread(()->{
             try (Connection con=DriverManager.getConnection(dbUrl,dbUser,dbPass)){
                 PreparedStatement ps=con.prepareStatement(
-                    "SELECT DISTINCT c.club_id,c.club_name FROM club c "+
-                    "JOIN members_in mi ON c.club_id=mi.club_id "+
+                    "SELECT DISTINCT c.club_id,c.club_name FROM club c JOIN members_in mi ON c.club_id=mi.club_id " +
                     "WHERE mi.user_id=? AND mi.role_type='staff_incharge' ORDER BY c.club_name");
                 ps.setInt(1,userId); ResultSet rs=ps.executeQuery();
                 DefaultComboBoxModel<String> m=new DefaultComboBoxModel<>();
@@ -1706,8 +2320,7 @@ public class StaffDashboard extends JFrame {
                 final int fc=count;
                 SwingUtilities.invokeLater(()->{combo.setModel(m);if(fc==0)combo.setEnabled(false);});
             } catch (SQLException ex){
-                SwingUtilities.invokeLater(()->{combo.removeAllItems();
-                    combo.addItem("-- Error loading clubs --");combo.setEnabled(false);});
+                SwingUtilities.invokeLater(()->{combo.removeAllItems();combo.addItem("-- Error loading clubs --");combo.setEnabled(false);});
             }
         }).start();
     }
@@ -1735,17 +2348,13 @@ public class StaffDashboard extends JFrame {
                 String val=rs.next()?String.valueOf(rs.getInt(1)):"0";
                 SwingUtilities.invokeLater(()->{
                     int cnt=0;
-                    for (Component c:card.getComponents()){
-                        if (c instanceof JLabel){cnt++;if(cnt==2){((JLabel)c).setText(val);break;}}
-                    }
+                    for (Component c:card.getComponents()){if(c instanceof JLabel){cnt++;if(cnt==2){((JLabel)c).setText(val);break;}}}
                     card.repaint();
                 });
             } catch (SQLException ex){
                 SwingUtilities.invokeLater(()->{
                     int cnt=0;
-                    for (Component c:card.getComponents()){
-                        if (c instanceof JLabel){cnt++;if(cnt==2){((JLabel)c).setText("0");break;}}
-                    }
+                    for (Component c:card.getComponents()){if(c instanceof JLabel){cnt++;if(cnt==2){((JLabel)c).setText("0");break;}}}
                 });
             }
         }).start();
@@ -1754,16 +2363,14 @@ public class StaffDashboard extends JFrame {
     // ══════════════════════════════════════════════════════════════
     //  UI HELPERS
     // ══════════════════════════════════════════════════════════════
-    private void pageTitle(JPanel pg,String text,int W){
+    private void pageTitle(JPanel pg, String text, int W){
         JLabel t=makeLabel(text,new Font("Georgia",Font.BOLD|Font.ITALIC,26),TEXT_PRIMARY);
-        t.setBounds(24,18,W-48,36); pg.add(t);
-        JSeparator s=buildSeparator(); s.setBounds(24,58,W/3,2); pg.add(s);
+        t.setBounds(24,16,W-48,34); pg.add(t);
+        JSeparator s=buildSeparator(); s.setBounds(24,54,W/3,2); pg.add(s);
     }
-    private JLabel fldLbl(String t,int x,int y,int w){
-        return lblAt(makeLabel(t,new Font("SansSerif",Font.PLAIN,12),TEXT_MUTED),x,y,w,18);
-    }
-    private JLabel lblAt(JLabel l,int x,int y,int w,int h){l.setBounds(x,y,w,h);return l;}
-    private JScrollPane spAt(JScrollPane sp,int x,int y,int w,int h){sp.setBounds(x,y,w,h);return sp;}
+    private JLabel fldLbl(String t,int x,int y,int w){ return lblAt(makeLabel(t,new Font("SansSerif",Font.PLAIN,12),TEXT_MUTED),x,y,w,16); }
+    private JLabel lblAt(JLabel l,int x,int y,int w,int h){ l.setBounds(x,y,w,h); return l; }
+    private JScrollPane spAt(JScrollPane sp,int x,int y,int w,int h){ sp.setBounds(x,y,w,h); return sp; }
     private DefaultTableModel noEditModel(String[] cols){
         return new DefaultTableModel(cols,0){@Override public boolean isCellEditable(int r,int c){return false;}};
     }
@@ -1792,12 +2399,9 @@ public class StaffDashboard extends JFrame {
             }
         };
         c.setOpaque(false);
-        JLabel ic=new JLabel(emoji); ic.setFont(new Font("Segoe UI Emoji",Font.PLAIN,22));
-        ic.setBounds(12,12,30,28); c.add(ic);
-        JLabel vl=makeLabel(value,new Font("Georgia",Font.BOLD,28),TEXT_PRIMARY);
-        vl.setBounds(12,40,120,36); c.add(vl);
-        JLabel lb=makeLabel(label,new Font("SansSerif",Font.PLAIN,11),TEXT_MUTED);
-        lb.setBounds(12,76,160,18); c.add(lb);
+        JLabel ic=new JLabel(emoji); ic.setFont(new Font("Segoe UI Emoji",Font.PLAIN,20)); ic.setBounds(10,10,28,24); c.add(ic);
+        JLabel vl=makeLabel(value,new Font("Georgia",Font.BOLD,26),TEXT_PRIMARY); vl.setBounds(10,34,120,32); c.add(vl);
+        JLabel lb=makeLabel(label,new Font("SansSerif",Font.PLAIN,11),TEXT_MUTED); lb.setBounds(10,66,160,16); c.add(lb);
         return c;
     }
     private JPanel avatarPanel(String name,int size){
@@ -1805,8 +2409,7 @@ public class StaffDashboard extends JFrame {
             @Override protected void paintComponent(Graphics g){
                 Graphics2D g2=(Graphics2D)g;
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setPaint(new RadialGradientPaint(getWidth()/2f,getHeight()/2f,getWidth()/2f,
-                    new float[]{0f,1f},new Color[]{new Color(130,60,255,200),new Color(80,20,180,200)}));
+                g2.setPaint(new RadialGradientPaint(getWidth()/2f,getHeight()/2f,getWidth()/2f,new float[]{0f,1f},new Color[]{new Color(130,60,255,200),new Color(80,20,180,200)}));
                 g2.fillOval(0,0,getWidth()-1,getHeight()-1);
                 String init=name.isEmpty()?"S":String.valueOf(name.charAt(0)).toUpperCase();
                 g2.setColor(Color.WHITE); g2.setFont(new Font("Georgia",Font.BOLD,(int)(size*0.42)));
@@ -1840,8 +2443,7 @@ public class StaffDashboard extends JFrame {
             }
         };
         btn.putClientProperty("active",active);
-        btn.setContentAreaFilled(false); btn.setBorderPainted(false);
-        btn.setFocusPainted(false); btn.setOpaque(false);
+        btn.setContentAreaFilled(false); btn.setBorderPainted(false); btn.setFocusPainted(false); btn.setOpaque(false);
         btn.setForeground(active?TEXT_PRIMARY:TEXT_MUTED);
         btn.setFont(new Font("SansSerif",Font.PLAIN+(active?Font.BOLD:0),13));
         btn.setHorizontalAlignment(SwingConstants.LEFT);
@@ -1874,8 +2476,7 @@ public class StaffDashboard extends JFrame {
                 super.paintComponent(g);
             }
         };
-        btn.setContentAreaFilled(false); btn.setBorderPainted(false);
-        btn.setFocusPainted(false); btn.setOpaque(false);
+        btn.setContentAreaFilled(false); btn.setBorderPainted(false); btn.setFocusPainted(false); btn.setOpaque(false);
         btn.setForeground(Color.WHITE); btn.setFont(new Font("Georgia",Font.BOLD,13));
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         btn.addMouseListener(new MouseAdapter(){
@@ -1906,12 +2507,6 @@ public class StaffDashboard extends JFrame {
         f.setBackground(new Color(30,16,60)); f.setForeground(TEXT_PRIMARY);
         f.setCaretColor(ACCENT_LIGHT); f.setFont(new Font("SansSerif",Font.PLAIN,13)); return f;
     }
-    private JTextArea styledTextArea(){
-        JTextArea a=new JTextArea();
-        a.setBackground(new Color(30,16,60)); a.setForeground(TEXT_PRIMARY);
-        a.setFont(new Font("SansSerif",Font.PLAIN,13)); a.setLineWrap(true);
-        a.setBorder(BorderFactory.createLineBorder(CARD_BORDER,1)); return a;
-    }
     private JScrollPane styledScroll(JPanel content){
         JScrollPane sp=new JScrollPane(content,
             JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
@@ -1927,7 +2522,7 @@ public class StaffDashboard extends JFrame {
     }
     private void styleTable(JTable t){
         t.setBackground(new Color(12,6,30)); t.setForeground(TEXT_PRIMARY);
-        t.setFont(new Font("SansSerif",Font.PLAIN,13)); t.setRowHeight(32);
+        t.setFont(new Font("SansSerif",Font.PLAIN,13)); t.setRowHeight(30);
         t.setShowGrid(false); t.setIntercellSpacing(new Dimension(0,0));
         t.setSelectionBackground(new Color(100,50,200,120)); t.setSelectionForeground(Color.WHITE);
         t.getTableHeader().setBackground(new Color(25,12,55));
@@ -1965,12 +2560,10 @@ public class StaffDashboard extends JFrame {
         g.setColor(new Color(130,60,255,55)); g.fillOval(0,0,size,size);
         g.setColor(ACCENT); g.setStroke(new BasicStroke(size*0.04f));
         g.drawOval((int)(size*0.03),(int)(size*0.03),(int)(size*0.94),(int)(size*0.94));
-        g.setPaint(new RadialGradientPaint(size/2f,size/2f,size*0.42f,new float[]{0f,1f},
-            new Color[]{new Color(160,80,255,120),new Color(0,0,0,0)}));
+        g.setPaint(new RadialGradientPaint(size/2f,size/2f,size*0.42f,new float[]{0f,1f},new Color[]{new Color(160,80,255,120),new Color(0,0,0,0)}));
         g.fillOval((int)(size*0.08),(int)(size*0.08),(int)(size*0.84),(int)(size*0.84));
         g.setColor(ACCENT_LIGHT); int s2=size/2,cap=(int)(size*0.26);
-        g.fillPolygon(new int[]{s2,s2+cap,s2,s2-cap},
-            new int[]{(int)(size*0.28),(int)(size*0.40),(int)(size*0.52),(int)(size*0.40)},4);
+        g.fillPolygon(new int[]{s2,s2+cap,s2,s2-cap},new int[]{(int)(size*0.28),(int)(size*0.40),(int)(size*0.52),(int)(size*0.40)},4);
         g.setColor(new Color(220,180,255)); int tw=(int)(size*0.36),th=(int)(size*0.10);
         g.fillRoundRect(s2-tw/2,(int)(size*0.22),tw,th,6,6);
         g.setColor(GOLD); g.setStroke(new BasicStroke(size*0.025f));
