@@ -119,8 +119,8 @@ public class StaffDashboard extends JFrame {
             buildManagedEventsPage(scr);
 
             if (isIncharge) {
-                buildCreateClubEventPage(scr);
-                buildCreateStaffEventPage(scr);
+                buildCreateClubEventPage(scr);   // page 3 — incharge only
+                buildCreateStaffEventPage(scr);  // page 4 — incharge only
                 buildParticipantsPage(scr);
                 buildAttendancePage(scr);
                 buildCertificatesPage(scr);
@@ -141,11 +141,6 @@ public class StaffDashboard extends JFrame {
     // ══════════════════════════════════════════════════════════════
     //  SCROLLABLE PAGE HELPER
     // ══════════════════════════════════════════════════════════════
-    /**
-     * Clears the page panel, wraps it in a JScrollPane, and returns
-     * the inner content panel so all components can be added to it.
-     * The page itself stays fixed; only the content scrolls.
-     */
     private JPanel createScrollablePage(JPanel pg, int W, int H) {
         pg.removeAll();
         JPanel content = new JPanel(null);
@@ -251,12 +246,13 @@ public class StaffDashboard extends JFrame {
         JSeparator sepLine = buildSeparator();
         sepLine.setBounds(20,136,SIDEBAR_W_PX-40,2); sidebar.add(sepLine);
 
+        // "Create Club Event" menu entry is ONLY added for staff incharges
         String[][] menu = isIncharge
             ? new String[][]{
                 {"\uD83C\uDFE0","Overview"},
                 {"\uD83C\uDFEB","My Clubs"},
                 {"\uD83D\uDCCB","Managed Events"},
-                {"\uD83C\uDFAD","Create Club Event"},
+                {"\uD83C\uDFAD","Create Club Event"},   // incharge only
                 {"\uD83C\uDFDB","Create Staff Event"},
                 {"\uD83D\uDC65","Participants"},
                 {"\u270D","Mark Attendance"},
@@ -380,13 +376,12 @@ public class StaffDashboard extends JFrame {
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  PAGE 0 — OVERVIEW  (already had its own scroll; kept as-is)
+    //  PAGE 0 — OVERVIEW
     // ══════════════════════════════════════════════════════════════
     private void buildOverviewPage(Dimension scr) {
         JPanel pg=pages[0]; int W=scr.width-SIDEBAR_W_PX, H=scr.height-TOP_H, cx=W/2;
         pg.removeAll();
 
-        // ── Refresh button (lives on pg so it's always visible) ──
         JButton refreshBtn=buildButton("↻ Refresh",false);
         refreshBtn.setBounds(W-130,18,110,32);
         refreshBtn.addActionListener(e->refreshOverviewPage());
@@ -709,7 +704,10 @@ public class StaffDashboard extends JFrame {
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  PAGE 3 (INCHARGE) — CREATE CLUB EVENT
+    //  PAGE 3 (INCHARGE ONLY) — CREATE CLUB EVENT
+    //  NOTE: This page is ONLY built and accessible when isIncharge == true.
+    //        The sidebar menu entry for "Create Club Event" is also only shown
+    //        to incharge users (see buildSidebar above).
     // ══════════════════════════════════════════════════════════════
     private void buildCreateClubEventPage(Dimension scr) {
         JPanel pg = pages[3];
@@ -719,7 +717,17 @@ public class StaffDashboard extends JFrame {
 
         pageTitle(content, "Create Club Event", W);
 
-        int cw = 540, ch = 440, cardX = cx - cw/2, cardY = 66;
+        // Guard banner — makes it visually clear this is incharge-only
+        JPanel accessBanner = glassCard();
+        accessBanner.setBounds(24, 62, W-48, 34);
+        content.add(accessBanner);
+        JLabel accessLbl = makeLabel(
+            "🔒  Only Staff Incharges can create club events. You are creating on behalf of the selected club.",
+            new Font("SansSerif", Font.PLAIN, 12), ACCENT_LIGHT);
+        accessLbl.setBounds(14, 9, W-76, 18);
+        accessBanner.add(accessLbl);
+
+        int cw = 540, ch = 480, cardX = cx - cw/2, cardY = 104;
         JPanel card = glassCard();
         card.setBounds(cardX, cardY, cw, ch);
         content.add(card);
@@ -734,8 +742,8 @@ public class StaffDashboard extends JFrame {
         clubCombo.setBounds(fx,fy,fw,36); card.add(clubCombo); fy+=46;
         loadStaffInchargeClubsCombo(clubCombo);
 
-        card.add(fldLbl("Start Date (YYYY-MM-DD)",fx,fy,fw/2-8));
-        card.add(fldLbl("End Date",fx+fw/2+8,fy,fw/2-8)); fy+=16;
+        card.add(fldLbl("Start Date (YYYY-MM-DD)  — must be today or future",fx,fy,fw/2-8));
+        card.add(fldLbl("End Date  — must be ≥ start date",fx+fw/2+8,fy,fw/2-8)); fy+=16;
         JTextField f3=styledField(); f3.setBounds(fx,fy,fw/2-8,36); card.add(f3);
         JTextField f4=styledField(); f4.setBounds(fx+fw/2+8,fy,fw/2-8,36); card.add(f4); fy+=46;
 
@@ -756,9 +764,34 @@ public class StaffDashboard extends JFrame {
             String club=(String)clubCombo.getSelectedItem();
             String sd=f3.getText().trim(), ed=f4.getText().trim();
             String st=f5.getText().trim(), et=f6.getText().trim();
+
             if (title.isEmpty()){ statusLbl.setForeground(ERROR_COL); statusLbl.setText("Event title is required."); return; }
             if (club==null||club.startsWith("--")){ statusLbl.setForeground(ERROR_COL); statusLbl.setText("Select a club where you are staff_incharge."); return; }
             if (sd.isEmpty()||ed.isEmpty()||st.isEmpty()||et.isEmpty()){ statusLbl.setForeground(ERROR_COL); statusLbl.setText("Fill all date/time fields."); return; }
+
+            // ── Date validation ──────────────────────────────────
+            try {
+                LocalDate startDate = LocalDate.parse(sd);
+                LocalDate endDate   = LocalDate.parse(ed);
+                LocalDate today     = LocalDate.now();
+
+                if (startDate.isBefore(today)) {
+                    statusLbl.setForeground(ERROR_COL);
+                    statusLbl.setText("Start date must be today or a future date.");
+                    return;
+                }
+                if (endDate.isBefore(startDate)) {
+                    statusLbl.setForeground(ERROR_COL);
+                    statusLbl.setText("End date cannot be before the start date.");
+                    return;
+                }
+            } catch (java.time.format.DateTimeParseException dpe) {
+                statusLbl.setForeground(ERROR_COL);
+                statusLbl.setText("Invalid date format — use YYYY-MM-DD.");
+                return;
+            }
+            // ── End date validation ──────────────────────────────
+
             try {
                 int clubId=Integer.parseInt(club.split("\\|")[0].trim());
                 createClubEvent(title,clubId,sd,ed,st,et,statusLbl,f1,f3,f4,f5,f6);
@@ -786,7 +819,7 @@ public class StaffDashboard extends JFrame {
         bannerLbl.setBounds(14, 10, W-76, 18);
         banner.add(bannerLbl);
 
-        int cw=560, ch=560, cardX=cx-cw/2, cardY=106;
+        int cw=560, ch=580, cardX=cx-cw/2, cardY=106;
         JPanel card=glassCard();
         card.setBounds(cardX, cardY, cw, ch);
         content.add(card);
@@ -804,8 +837,8 @@ public class StaffDashboard extends JFrame {
         venueCombo.setBounds(fx,fy+16,fw/2-8,36); card.add(venueCombo);
         loadVenueCombo(venueCombo); fy+=62;
 
-        card.add(fldLbl("Start Date (YYYY-MM-DD)",fx,fy,fw/2-8));
-        card.add(fldLbl("End Date (YYYY-MM-DD)",fx+fw/2+8,fy,fw/2-8)); fy+=16;
+        card.add(fldLbl("Start Date (YYYY-MM-DD)  — must be today or future",fx,fy,fw/2-8));
+        card.add(fldLbl("End Date  — must be ≥ start date",fx+fw/2+8,fy,fw/2-8)); fy+=16;
         JTextField fSd=styledField(); fSd.setBounds(fx,fy,fw/2-8,36); card.add(fSd);
         JTextField fEd=styledField(); fEd.setBounds(fx+fw/2+8,fy,fw/2-8,36); card.add(fEd); fy+=46;
 
@@ -834,10 +867,35 @@ public class StaffDashboard extends JFrame {
             String sd=fSd.getText().trim(), ed=fEd.getText().trim();
             String st=fSt.getText().trim(), et=fEt.getText().trim();
             String desc=fDesc.getText().trim();
+
             if (title.isEmpty()){ statusLbl.setForeground(ERROR_COL); statusLbl.setText("Event title is required."); return; }
             if (evType.isEmpty()){ statusLbl.setForeground(ERROR_COL); statusLbl.setText("Event type is required."); return; }
             if (sd.isEmpty()||ed.isEmpty()||st.isEmpty()||et.isEmpty()){ statusLbl.setForeground(ERROR_COL); statusLbl.setText("Fill all date/time fields."); return; }
             if (venue==null||venue.startsWith("--")){ statusLbl.setForeground(ERROR_COL); statusLbl.setText("Select a venue."); return; }
+
+            // ── Date validation ──────────────────────────────────
+            try {
+                LocalDate startDate = LocalDate.parse(sd);
+                LocalDate endDate   = LocalDate.parse(ed);
+                LocalDate today     = LocalDate.now();
+
+                if (startDate.isBefore(today)) {
+                    statusLbl.setForeground(ERROR_COL);
+                    statusLbl.setText("Start date must be today or a future date.");
+                    return;
+                }
+                if (endDate.isBefore(startDate)) {
+                    statusLbl.setForeground(ERROR_COL);
+                    statusLbl.setText("End date cannot be before the start date.");
+                    return;
+                }
+            } catch (java.time.format.DateTimeParseException dpe) {
+                statusLbl.setForeground(ERROR_COL);
+                statusLbl.setText("Invalid date format — use YYYY-MM-DD.");
+                return;
+            }
+            // ── End date validation ──────────────────────────────
+
             try {
                 int venueId=Integer.parseInt(venue.split("\\|")[0].trim());
                 createStaffEvent(title,evType,venueId,sd,ed,st,et,desc,statusLbl,fTitle,typeField,fSd,fEd,fSt,fEt,fDesc);
@@ -1016,7 +1074,6 @@ public class StaffDashboard extends JFrame {
             evCombo.setBounds(160, 62, 440, 38); content.add(evCombo);
         }
 
-        // ── Date validation banner ──────────────────────────────
         JPanel dateBanner = glassCard();
         dateBanner.setBounds(24, 108, W-48, 34);
         dateBanner.setVisible(false);
@@ -2238,11 +2295,16 @@ public class StaffDashboard extends JFrame {
         }).start();
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  EVENT CREATION DB METHODS
+    //  Both methods rely on the date validation already done in the
+    //  button listeners above; they only reach here with valid dates.
+    // ══════════════════════════════════════════════════════════════
     private void createClubEvent(String title, int clubId, String sd, String ed, String st, String et,
             JLabel statusLbl, JTextField f1, JTextField f3, JTextField f4, JTextField f5, JTextField f6){
         new Thread(()->{
             try {
-                java.sql.Date.valueOf(sd); java.sql.Date.valueOf(ed);
+                // Time parsing (date already validated in button listener)
                 LocalTime.parse(st); LocalTime.parse(et);
                 String finalTitle=title.length()>100?title.substring(0,100):title;
                 try (Connection con=DriverManager.getConnection(dbUrl,dbUser,dbPass)){
@@ -2268,11 +2330,11 @@ public class StaffDashboard extends JFrame {
                         f1.setText(""); f3.setText(""); f4.setText(""); f5.setText(""); f6.setText("");});
                 }
             } catch (java.time.format.DateTimeParseException dpe){
-                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);statusLbl.setText("Invalid date/time format. Use YYYY-MM-DD and HH:MM");});
+                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);statusLbl.setText("Invalid time format — use HH:MM.");});
             } catch (SQLException ex){
                 SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);String msg=ex.getMessage()==null?"DB error":ex.getMessage();statusLbl.setText("Error: "+msg.substring(0,Math.min(60,msg.length())));});
             } catch (Exception ex){
-                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);statusLbl.setText("Error: invalid date and time");});
+                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);statusLbl.setText("Error: "+ex.getMessage());});
             }
         }).start();
     }
@@ -2283,7 +2345,8 @@ public class StaffDashboard extends JFrame {
             JTextField fSt, JTextField fEt, JTextArea fDesc){
         new Thread(()->{
             try {
-                java.sql.Date.valueOf(sd); java.sql.Date.valueOf(ed); LocalTime.parse(st); LocalTime.parse(et);
+                // Time parsing (date already validated in button listener)
+                LocalTime.parse(st); LocalTime.parse(et);
                 try (Connection con=DriverManager.getConnection(dbUrl,dbUser,dbPass)){
                     ResultSet seq=con.createStatement().executeQuery("SELECT NVL(MAX(event_id),0)+1 FROM staff_event");
                     int evId=seq.next()?seq.getInt(1):1;
@@ -2299,7 +2362,7 @@ public class StaffDashboard extends JFrame {
                         fTitle.setText(""); typeField.setText(""); fSd.setText(""); fEd.setText(""); fSt.setText(""); fEt.setText(""); fDesc.setText("");});
                 }
             } catch (java.time.format.DateTimeParseException dpe){
-                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);statusLbl.setText("Invalid date/time format. Use YYYY-MM-DD and HH:MM");});
+                SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);statusLbl.setText("Invalid time format — use HH:MM.");});
             } catch (Exception ex){
                 SwingUtilities.invokeLater(()->{statusLbl.setForeground(ERROR_COL);String msg=ex.getMessage()==null?"error":ex.getMessage();statusLbl.setText("Error: "+msg.substring(0,Math.min(60,msg.length())));});
             }
