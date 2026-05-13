@@ -1,27 +1,14 @@
 package thread;
 
 import javax.swing.*;
-import javax.swing.border.EmptyBorder;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
-import java.awt.event.*;
-import java.awt.geom.*;
 import java.awt.image.BufferedImage;
 import java.awt.print.*;
 import java.io.*;
-import java.sql.*;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
+import java.net.URISyntaxException;
 import javax.imageio.ImageIO;
 
-/**
- * CertificateViewer — renders a styled certificate and allows
- * PDF-print or PNG download.
- *
- * Usage:
- *   CertificateViewer.show(parentFrame, certData);
- *
- * certData fields: studentName, eventName, certType, issueDate, deptName
- */
 public class CertificateViewer extends JDialog {
 
     // ── certificate data ──────────────────────────────────────────
@@ -29,482 +16,513 @@ public class CertificateViewer extends JDialog {
         public int    certId;
         public String studentName;
         public String eventName;
-        public String certType;      // Participant | Winner | Runner-up
+        public String certType;   // "Participant" | "Winner" | "Runner-up"
         public String issueDate;
         public String deptName;
     }
 
-    // ── colours matching the dashboard palette ────────────────────
-    private static final Color BG_PAGE     = new Color(8, 8, 18);
-    private static final Color ACCENT      = new Color(130, 60, 255);
-    private static final Color ACCENT_L    = new Color(180,120,255);
-    private static final Color GOLD        = new Color(255,200, 60);
-    private static final Color TEXT_PRI    = new Color(240,235,255);
-    private static final Color TEXT_MUT    = new Color(160,150,200);
-    private static final Color CARD_BG     = new Color(22, 12, 50);
-    private static final Color CARD_BORDER = new Color(130,60,255,160);
+    // ── colours ───────────────────────────────────────────────────
+    static final Color BLUE_DARK  = new Color(26,  58, 107);
+    static final Color BLUE_MID   = new Color(58, 114, 181);
+    static final Color BLUE_LIGHT = new Color(74,  90, 128);
+    static final Color BLUE_MUTED = new Color(122, 138, 170);
+    static final Color GOLD       = new Color(160, 110,   0);
+    static final Color WHITE      = Color.WHITE;
+    static final Color PAGE_BG    = new Color(235, 238, 245);
 
-    // ── cert canvas size (A4 landscape proportions) ───────────────
-    private static final int CERT_W = 900;
-    private static final int CERT_H = 636;
+    // ── ACTUAL certificate render size (internal drawing canvas) ──
+    static final int CERT_W = 900;
+    static final int CERT_H = 636;
 
-    private final CertData data;
-    private CertificatePanel certPanel;
+    // ── DISPLAY size — fits on screen with room for top/bottom bars
+    // The cert is scaled DOWN to fit, but rendered at full res for export
+    static final int DISP_W = 760;
+    static final int DISP_H = 537;   // maintains 900:636 ratio
 
-    // ─────────────────────────────────────────────────────────────
-    //  Static factory
-    // ─────────────────────────────────────────────────────────────
+    // ── Fixed window layout ───────────────────────────────────────
+    static final int TOP_H = 50;     // top bar height
+    static final int BOT_H = 58;     // bottom bar height
+    static final int PAD   = 12;     // padding above/below cert
+    static final int WIN_W = DISP_W + 40;
+    static final int WIN_H = 740;
+
+    
+
+    
+ // ── TEXT POSITIONS ─────────────────────────────────────
+
+ // Student name (center blank line)
+ static final int NAME_Y = 315;
+
+ // Event name
+ static final int EVENT_X = 190;
+ static final int EVENT_Y = 520;
+
+ // Date
+ static final int DATE_X = 730;
+ static final int DATE_Y = 520;
+
+ // Certificate ID
+ static final int CERT_ID_X = 830;
+ static final int CERT_ID_Y = 145;
+
+ // Awarded date (top right)
+ static final int AWARD_DATE_X = 830;
+ static final int AWARD_DATE_Y = 165;
+
+    private final CertData      data;
+    private       BufferedImage templateImage;
+    private       BufferedImage certImage;
+
+    // ── static factory ────────────────────────────────────────────
     public static void show(Frame owner, CertData data) {
-        CertificateViewer dlg = new CertificateViewer(owner, data);
-        dlg.setVisible(true);
+        new CertificateViewer(owner, data).setVisible(true);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    //  Constructor
-    // ─────────────────────────────────────────────────────────────
+    // ── constructor ───────────────────────────────────────────────
     public CertificateViewer(Frame owner, CertData data) {
-        super(owner, "Certificate — " + data.certType, true);
+        super(owner, "Certificate \u2014 " + data.certType, true);
         this.data = data;
+        templateImage = loadTemplate();
+        certImage=renderAtScale(2);
+        buildUI();
+    }
 
-        setSize(980, 780);
-        setLocationRelativeTo(owner);
+    // =============================================================
+    //  UI  —  null layout, every pixel controlled
+    // =============================================================
+    private void buildUI() {
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setResizable(false);
-        setUndecorated(false);
+        setSize(WIN_W, WIN_H);
+        setLocationRelativeTo(getOwner());
 
-        JPanel root = new JPanel(new BorderLayout(0, 0)) {
-            @Override protected void paintComponent(Graphics g) {
-                super.paintComponent(g);
-                Graphics2D g2 = (Graphics2D) g;
-                g2.setPaint(new GradientPaint(0,0,BG_PAGE,getWidth(),getHeight(),new Color(18,8,40)));
-                g2.fillRect(0,0,getWidth(),getHeight());
-            }
-        };
-        root.setOpaque(true);
+        JPanel content = new JPanel(null);
+        content.setBackground(PAGE_BG);
+        setContentPane(content);
 
-        // ── top title bar ─────────────────────────────────────────
+        // ── top bar ───────────────────────────────────────────────
         JPanel topBar = new JPanel(null);
-        topBar.setOpaque(false);
-        topBar.setPreferredSize(new Dimension(980, 56));
+        topBar.setBackground(WHITE);
+        topBar.setBounds(0, 0, WIN_W, TOP_H);
+        topBar.setBorder(BorderFactory.createMatteBorder(
+                         0, 0, 1, 0, new Color(200, 210, 225)));
+        content.add(topBar);
 
-        JLabel title = makeLabel("🎓  Certificate of " + data.certType,
-            new Font("Georgia", Font.BOLD|Font.ITALIC, 18), TEXT_PRI);
-        title.setBounds(24, 14, 600, 28); topBar.add(title);
+        JLabel titleLbl = new JLabel("Certificate of " + data.certType);
+        titleLbl.setFont(new Font("Georgia", Font.BOLD | Font.ITALIC, 16));
+        titleLbl.setForeground(BLUE_DARK);
+        titleLbl.setBounds(16, 12, 500, 26);
+        topBar.add(titleLbl);
 
-        JButton closeBtn = buildSmallBtn("✕ Close");
-        closeBtn.setBounds(880, 12, 80, 32);
+        JButton closeBtn = new JButton("Close");
+        closeBtn.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        closeBtn.setForeground(BLUE_DARK);
+        closeBtn.setBackground(PAGE_BG);
+        closeBtn.setFocusPainted(false);
+        closeBtn.setBounds(WIN_W - 86, 11, 68, 28);
         closeBtn.addActionListener(e -> dispose());
         topBar.add(closeBtn);
 
-        // ── certificate canvas ────────────────────────────────────
-        certPanel = new CertificatePanel(data);
-        certPanel.setPreferredSize(new Dimension(CERT_W, CERT_H));
+        // ── certificate display — centred between top and bottom bars
+        int certX = (WIN_W - DISP_W) / 2;
+        int certY = TOP_H + PAD;
 
-        JPanel canvasHolder = new JPanel(new GridBagLayout());
-        canvasHolder.setOpaque(false);
-        canvasHolder.setBorder(new EmptyBorder(10, 30, 10, 30));
-        canvasHolder.add(certPanel);
+        JPanel certPanel = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                g.drawImage(certImage, 0, 0, getWidth(), getHeight(), null);
+            }
+            };
+        certPanel.setOpaque(true);
+        certPanel.setBounds(certX, certY, DISP_W, DISP_H);
+        content.add(certPanel);
 
-        // ── bottom action bar ─────────────────────────────────────
-        JPanel bottomBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 18, 14));
-        bottomBar.setOpaque(false);
+        // ── bottom bar — always at WIN_H - BOT_H ─────────────────
+        int botY = WIN_H - BOT_H - 35;
 
-        JButton dlPng = buildActionBtn("⬇  Download PNG", true);
-        JButton dlPrint = buildActionBtn("🖨  Print / Save PDF", false);
+        JPanel bottomBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 10));
+        bottomBar.setBackground(PAGE_BG);
+        bottomBar.setBounds(0, botY, WIN_W, BOT_H);
+        bottomBar.setBorder(BorderFactory.createMatteBorder(
+                            1, 0, 0, 0, new Color(210, 218, 228)));
+        content.add(bottomBar);
 
-        dlPng.addActionListener(e -> downloadPNG());
-        dlPrint.addActionListener(e -> printCertificate());
-
-        bottomBar.add(dlPng);
-        bottomBar.add(dlPrint);
-
-        root.add(topBar,     BorderLayout.NORTH);
-        root.add(canvasHolder, BorderLayout.CENTER);
-        root.add(bottomBar,  BorderLayout.SOUTH);
-
-        setContentPane(root);
+        JButton btnPng = buildBtn("Save as PNG", true);
+        JButton btnJpg = buildBtn("Save as JPG", false);
+        JButton btnPdf = buildBtn("Print / PDF", false);
+        btnPng.addActionListener(e -> saveImage("PNG"));
+        btnJpg.addActionListener(e -> saveImage("JPG"));
+        btnPdf.addActionListener(e -> printCert());
+        bottomBar.add(btnPng);
+        bottomBar.add(btnJpg);
+        bottomBar.add(btnPdf);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    //  Export: PNG
-    // ─────────────────────────────────────────────────────────────
-    private void downloadPNG() {
+    // =============================================================
+    //  RENDER  —  draws onto a CERT_W x CERT_H canvas
+    //  scale=1 → 900×636 for screen, scale=2 → 1800×1272 for export
+    // =============================================================
+    private BufferedImage renderAtScale(int scale) {
+        int w = CERT_W * scale;
+        int h = CERT_H * scale;
+
+        BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = img.createGraphics();
+
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,      RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING,         RenderingHints.VALUE_RENDER_QUALITY);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,     RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+
+        // always white fill first
+        g.setColor(WHITE);
+        g.fillRect(0, 0, w, h);
+
+        g.scale(scale, scale);
+
+        if (templateImage != null)
+            g.drawImage(templateImage, 0, 0, CERT_W, CERT_H, null);
+        else
+            drawFallbackBackground(g);
+
+        drawTextOverlay(g);
+
+        g.dispose();
+        return img;
+    }
+
+    // =============================================================
+    //  TEXT OVERLAY
+    //  Only writes into blank spaces the template leaves empty.
+    //  The template already has: title, "This is to certify that",
+    //  "For special achievements...", two signature lines.
+    //  We write: student name, event name, date, cert ID.
+    // =============================================================
+    private void drawTextOverlay(Graphics2D g) {
+
+    final int cx = CERT_W / 2;
+
+    // ── Student Name ─────────────────────────────
+    g.setFont(new Font("Georgia", Font.BOLD, 30));
+    g.setColor(BLUE_DARK);
+
+    String name = nvl(data.studentName, "________________");
+
+    drawCentred(g, name, cx, NAME_Y);
+
+    // ── Event Name ───────────────────────────────
+    g.setFont(new Font("Georgia", Font.BOLD | Font.ITALIC, 20));
+    g.setColor(BLUE_DARK);
+
+    String ev = nvl(data.eventName, "________________");
+
+    g.drawString(ev, EVENT_X, EVENT_Y);
+
+    // ── Department ───────────────────────────────
+    if (data.deptName != null && !data.deptName.isEmpty()) {
+
+        g.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        g.setColor(BLUE_MUTED);
+
+        drawCentred(g,
+                "Department of " + data.deptName,
+                cx,
+                EVENT_Y + 30);
+    }
+
+    // ── Bottom Date ──────────────────────────────
+    if (data.issueDate != null) {
+
+        g.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        g.setColor(BLUE_DARK);
+
+        g.drawString(data.issueDate, DATE_X, DATE_Y);
+    }
+
+    // ── Certificate ID ───────────────────────────
+    g.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    g.setColor(new Color(80, 90, 110));
+
+    String idStr =
+            "CES-" + String.format("%04d", data.certId);
+
+    FontMetrics fm = g.getFontMetrics();
+
+    g.drawString(
+            idStr,
+            CERT_ID_X - fm.stringWidth(idStr),
+            CERT_ID_Y
+    );
+
+    // ── Award Date Top Right ─────────────────────
+    if (data.issueDate != null) {
+
+        FontMetrics fm2 = g.getFontMetrics();
+
+        g.drawString(
+                data.issueDate,
+                AWARD_DATE_X - fm2.stringWidth(data.issueDate),
+                AWARD_DATE_Y
+        );
+    }
+}
+
+    // =============================================================
+    //  FALLBACK BACKGROUND (when no template is found)
+    // =============================================================
+    private void drawFallbackBackground(Graphics2D g) {
+        final int W = CERT_W, H = CERT_H, B = 22;
+
+        g.setColor(WHITE);
+        g.fillRect(0, 0, W, H);
+
+        g.setColor(BLUE_MID);
+        g.fillRect(0,     0,     W, B);
+        g.fillRect(0,     H - B, W, B);
+        g.fillRect(0,     0,     B, H);
+        g.fillRect(W - B, 0,     B, H);
+
+        g.setColor(new Color(100, 150, 210, 150));
+        g.fillPolygon(new int[]{0,    B*5, 0},   new int[]{0, 0, B*5},   3);
+        g.fillPolygon(new int[]{W,    W-B*5, W}, new int[]{0, 0, B*5},   3);
+        g.setColor(new Color(80, 120, 180, 100));
+        g.fillPolygon(new int[]{W,    W-B*3, W}, new int[]{H, H, H-B*3}, 3);
+        g.fillPolygon(new int[]{0,    B*3,   0}, new int[]{H, H, H-B*3}, 3);
+
+        g.setFont(new Font("Georgia", Font.BOLD, 160));
+        g.setColor(new Color(58, 114, 181, 12));
+        FontMetrics wm = g.getFontMetrics();
+        g.drawString("CES", W/2 - wm.stringWidth("CES")/2, H/2 + wm.getAscent()/3);
+
+        int hx = B + 14, hy = B + 12;
+        g.setColor(BLUE_MID);
+        g.fillRoundRect(hx, hy, 28, 28, 5, 5);
+        g.setColor(WHITE);
+        g.setFont(new Font("Georgia", Font.BOLD, 10));
+        FontMetrics lf = g.getFontMetrics();
+        g.drawString("CES", hx + 14 - lf.stringWidth("CES")/2, hy + 19);
+        g.setColor(BLUE_DARK);
+        g.setFont(new Font("SansSerif", Font.BOLD, 12));
+        g.drawString("Campus Event System", hx + 34, hy + 12);
+        g.setColor(BLUE_MUTED);
+        g.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        g.drawString("Certification Authority", hx + 34, hy + 26);
+
+        String title = titleFor(data.certType);
+        g.setFont(new Font("Georgia", Font.BOLD, 34));
+        g.setColor(BLUE_DARK);
+        FontMetrics tf = g.getFontMetrics();
+        g.drawString(title, W/2 - tf.stringWidth(title)/2, B + 110);
+
+        g.setFont(new Font("Georgia", Font.ITALIC, 14));
+        g.setColor(BLUE_LIGHT);
+        String certify = "This is to certify that";
+        FontMetrics cf = g.getFontMetrics();
+        g.drawString(certify, W/2 - cf.stringWidth(certify)/2, B + 152);
+
+        String body = bodyFor(data.certType);
+        g.setFont(new Font("Georgia", Font.PLAIN, 14));
+        g.setColor(BLUE_LIGHT);
+        FontMetrics bf = g.getFontMetrics();
+        g.drawString(body, W/2 - bf.stringWidth(body)/2, EVENT_Y + 36);
+
+        g.setColor(new Color(58, 114, 181, 60));
+        g.setStroke(new BasicStroke(1f));
+        g.drawLine(W/2 - 200, EVENT_Y + 55, W/2 + 200, EVENT_Y + 55);
+
+        int sigY = H - B - 62;
+        sigLine(g, W/4,   sigY, "Organiser");
+        sigLine(g, 3*W/4, sigY, "Principal");
+
+        g.setFont(new Font("SansSerif", Font.ITALIC, 10));
+        g.setColor(new Color(160, 170, 190));
+        String tag = "Campus Event System  \u00B7  Excellence in Participation";
+        FontMetrics tgf = g.getFontMetrics();
+        g.drawString(tag, W/2 - tgf.stringWidth(tag)/2, H - B/2 - 4);
+    }
+
+    private static void sigLine(Graphics2D g, int cx, int y, String role) {
+        g.setColor(new Color(58, 114, 181, 130));
+        g.setStroke(new BasicStroke(1f));
+        g.drawLine(cx - 60, y, cx + 60, y);
+        g.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        g.setColor(BLUE_MUTED);
+        FontMetrics fm = g.getFontMetrics();
+        g.drawString(role, cx - fm.stringWidth(role)/2, y + 16);
+    }
+
+    // =============================================================
+    //  TEMPLATE LOADER
+    // =============================================================
+    private static BufferedImage loadTemplate() {
+        String[] bases = {
+            "certificate_template", "Certificate_Template",
+            "certificate", "Certificate", "cert_template", "template"
+        };
+        String[] exts = { ".jpeg", ".jpg", ".png", ".JPEG", ".JPG", ".PNG" };
+
+        java.util.List<File> dirs = new java.util.ArrayList<>();
+        dirs.add(new File("."));
+        dirs.add(new File(System.getProperty("user.dir")));
+        try {
+            File jarDir = new File(CertificateViewer.class
+                .getProtectionDomain().getCodeSource()
+                .getLocation().toURI()).getParentFile();
+            if (jarDir != null) dirs.add(jarDir);
+        } catch (URISyntaxException | NullPointerException ignored) {}
+
+        for (File dir : dirs)
+            for (String base : bases)
+                for (String ext : exts) {
+                    File f = new File(dir, base + ext);
+                    if (f.exists()) {
+                        try {
+                            BufferedImage img = ImageIO.read(f);
+                            if (img != null) {
+                                System.out.println("[Cert] Loaded: " + f.getAbsolutePath());
+                                return img;
+                            }
+                        } catch (IOException ignored) {}
+                    }
+                }
+
+        for (String base : bases)
+            for (String ext : exts)
+                try (InputStream is = CertificateViewer.class
+                        .getResourceAsStream("/" + base + ext)) {
+                    if (is != null) {
+                        BufferedImage img = ImageIO.read(is);
+                        if (img != null) return img;
+                    }
+                } catch (IOException ignored) {}
+
+        System.err.println("[Cert] Template not found. Using fallback design.");
+        System.err.println("[Cert] Put certificate_template.jpeg in: "
+            + new File(".").getAbsolutePath());
+        return null;
+    }
+
+    // =============================================================
+    //  SAVE
+    // =============================================================
+    private void saveImage(String fmt) {
+        String ext = fmt.equalsIgnoreCase("JPG") ? "jpg" : "png";
         JFileChooser fc = new JFileChooser();
-        String safeName = data.studentName.replaceAll("[^a-zA-Z0-9]","_");
-        fc.setSelectedFile(new File("Certificate_" + safeName + ".png"));
-        fc.setDialogTitle("Save Certificate as PNG");
+        fc.setSelectedFile(new File("Certificate_" + safeName(data.studentName) + "." + ext));
+        fc.setDialogTitle("Save Certificate as " + fmt.toUpperCase());
+        fc.setFileFilter(new FileNameExtensionFilter(fmt + " image", ext));
         if (fc.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
 
         File file = fc.getSelectedFile();
-        if (!file.getName().toLowerCase().endsWith(".png"))
-            file = new File(file.getAbsolutePath() + ".png");
+        if (!file.getName().toLowerCase().endsWith("." + ext))
+            file = new File(file.getAbsolutePath() + "." + ext);
 
         try {
-            BufferedImage img = renderToImage(2); // 2× for retina quality
-            ImageIO.write(img, "PNG", file);
+            BufferedImage hi = renderAtScale(2);
+            boolean ok = ImageIO.write(hi,
+                fmt.equalsIgnoreCase("JPG") ? "JPEG" : "PNG", file);
+            if (!ok) throw new IOException("No writer for: " + fmt);
             JOptionPane.showMessageDialog(this,
-                "✅  Certificate saved:\n" + file.getAbsolutePath(),
+                "Saved:\n" + file.getAbsolutePath(),
                 "Saved", JOptionPane.INFORMATION_MESSAGE);
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this,
-                "Error saving: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                "Error: " + ex.getMessage(), "Error",
+                JOptionPane.ERROR_MESSAGE);
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    //  Export: Print (also works as "Save as PDF" via OS dialog)
-    // ─────────────────────────────────────────────────────────────
-    private void printCertificate() {
+    // =============================================================
+    //  PRINT / PDF
+    // =============================================================
+    private void printCert() {
         PrinterJob job = PrinterJob.getPrinterJob();
-        PageFormat pf = job.defaultPage();
-        Paper paper = pf.getPaper();
-
-        // A4 landscape in points (1 pt = 1/72 inch)
-        double w = 842, h = 595;
-        paper.setSize(w, h);
-        paper.setImageableArea(18, 18, w-36, h-36);
+        PageFormat pf  = job.defaultPage();
+        Paper paper    = pf.getPaper();
+        double pw = 842, ph = 595;
+        paper.setSize(pw, ph);
+        paper.setImageableArea(18, 18, pw - 36, ph - 36);
         pf.setOrientation(PageFormat.LANDSCAPE);
         pf.setPaper(paper);
 
-        job.setPrintable((graphics, pageFormat, pageIndex) -> {
-            if (pageIndex > 0) return Printable.NO_SUCH_PAGE;
-            Graphics2D g2 = (Graphics2D) graphics;
-            g2.translate(pageFormat.getImageableX(), pageFormat.getImageableY());
-            double scaleX = pageFormat.getImageableWidth()  / CERT_W;
-            double scaleY = pageFormat.getImageableHeight() / CERT_H;
-            double scale  = Math.min(scaleX, scaleY);
-            g2.scale(scale, scale);
-            certPanel.paint(g2);
+        job.setPrintable((gfx, fmt, idx) -> {
+            if (idx > 0) return Printable.NO_SUCH_PAGE;
+            Graphics2D g2 = (Graphics2D) gfx;
+            g2.setColor(WHITE);
+            g2.fillRect(0, 0, (int) fmt.getWidth(), (int) fmt.getHeight());
+            g2.translate(fmt.getImageableX(), fmt.getImageableY());
+            double iw = fmt.getImageableWidth(), ih = fmt.getImageableHeight();
+            double s  = Math.min(iw / CERT_W, ih / CERT_H);
+            g2.translate((iw - CERT_W * s) / 2, (ih - CERT_H * s) / 2);
+            g2.scale(s, s);
+            if (templateImage != null)
+                g2.drawImage(templateImage, 0, 0, CERT_W, CERT_H, null);
+            else
+                drawFallbackBackground(g2);
+            drawTextOverlay(g2);
             return Printable.PAGE_EXISTS;
         }, pf);
 
-        if (job.printDialog()) {
+        if (job.printDialog())
             try { job.print(); }
             catch (PrinterException ex) {
                 JOptionPane.showMessageDialog(this, "Print error: " + ex.getMessage());
             }
-        }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    //  Render certificate panel to a BufferedImage
-    // ─────────────────────────────────────────────────────────────
-    private BufferedImage renderToImage(int scale) {
-        BufferedImage img = new BufferedImage(
-            CERT_W * scale, CERT_H * scale, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g2 = img.createGraphics();
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-        g2.scale(scale, scale);
-        certPanel.paint(g2);
-        g2.dispose();
-        return img;
+    // ── helpers ───────────────────────────────────────────────────
+    private static void drawCentred(Graphics2D g, String text, int cx, int y) {
+        g.drawString(text, cx - g.getFontMetrics().stringWidth(text) / 2, y);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    //  The certificate canvas itself
-    // ─────────────────────────────────────────────────────────────
-    static class CertificatePanel extends JPanel {
-
-        private final CertData d;
-
-        CertificatePanel(CertData d) {
-            this.d = d;
-            setOpaque(false);
-            setPreferredSize(new Dimension(CERT_W, CERT_H));
-        }
-
-        @Override
-        protected void paintComponent(Graphics g0) {
-            Graphics2D g = (Graphics2D) g0.create();
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,  RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-
-            int W = CERT_W, H = CERT_H;
-
-            // ── 1. Background ──────────────────────────────────────
-            g.setPaint(new GradientPaint(0,0,new Color(12,6,30), W,H,new Color(22,8,48)));
-            g.fillRect(0,0,W,H);
-
-            // subtle radial glow
-            g.setPaint(new RadialGradientPaint(W/2f, H*0.35f, W*0.55f,
-                new float[]{0f,1f},
-                new Color[]{new Color(100,40,200,55), new Color(0,0,0,0)}));
-            g.fillRect(0,0,W,H);
-
-            // ── 2. Outer border frame ──────────────────────────────
-            int bm = 18; // border margin
-            // outer gold double-line
-            drawBorderFrame(g, bm, W, H);
-
-            // ── 3. Corner ornaments ────────────────────────────────
-            drawCornerOrnaments(g, bm+8, W, H);
-
-            // ── 4. Top watermark / seal ────────────────────────────
-            drawSeal(g, W/2, 80, 56);
-
-            // ── 5. Institution header ──────────────────────────────
-            drawCentred(g, "CAMPUS EVENT SYSTEM",
-                new Font("Georgia", Font.BOLD, 13),
-                new Color(180,140,255), W/2, 148);
-
-            // ── 6. Main title ──────────────────────────────────────
-            String titleText = getTitleText();
-            drawCentred(g, titleText,
-                new Font("Georgia", Font.BOLD|Font.ITALIC, 38),
-                GOLD, W/2, 210);
-
-            // gold underline under title
-            int tlW = 420;
-            g.setPaint(new LinearGradientPaint(W/2f-tlW/2f,0,W/2f+tlW/2f,0,
-                new float[]{0f,0.5f,1f},
-                new Color[]{new Color(255,200,60,0),GOLD,new Color(255,200,60,0)}));
-            g.setStroke(new BasicStroke(1.5f));
-            g.drawLine(W/2-tlW/2, 220, W/2+tlW/2, 220);
-
-            // ── 7. "This is to certify that" ──────────────────────
-            drawCentred(g, "This is to certify that",
-                new Font("Georgia", Font.ITALIC, 15),
-                new Color(160,150,200), W/2, 254);
-
-            // ── 8. Student name ────────────────────────────────────
-            drawCentred(g, d.studentName,
-                new Font("Georgia", Font.BOLD, 32),
-                TEXT_PRI, W/2, 300);
-
-            // name underline
-            FontMetrics nmFm = g.getFontMetrics(new Font("Georgia", Font.BOLD, 32));
-            int nmW = nmFm.stringWidth(d.studentName) + 60;
-            g.setPaint(new LinearGradientPaint(W/2f-nmW/2f,0,W/2f+nmW/2f,0,
-                new float[]{0f,0.5f,1f},
-                new Color[]{new Color(130,60,255,0), ACCENT, new Color(130,60,255,0)}));
-            g.setStroke(new BasicStroke(1.2f));
-            g.drawLine(W/2-nmW/2, 310, W/2+nmW/2, 310);
-
-            // ── 9. Body text ───────────────────────────────────────
-            String bodyLine = getBodyLine();
-            drawCentred(g, bodyLine,
-                new Font("Georgia", Font.PLAIN, 14),
-                new Color(200,190,230), W/2, 340);
-
-            // event name (highlighted)
-            drawCentred(g, "\"" + d.eventName + "\"",
-                new Font("Georgia", Font.BOLD|Font.ITALIC, 17),
-                ACCENT_L, W/2, 368);
-
-            // ── 10. Department ─────────────────────────────────────
-            if (d.deptName != null && !d.deptName.isEmpty()) {
-                drawCentred(g, "Department of " + d.deptName,
-                    new Font("SansSerif", Font.PLAIN, 12),
-                    new Color(140,130,180), W/2, 395);
-            }
-
-            // ── 11. Divider ────────────────────────────────────────
-            g.setPaint(new LinearGradientPaint(W/2f-200,0,W/2f+200,0,
-                new float[]{0f,0.5f,1f},
-                new Color[]{new Color(130,60,255,0), new Color(130,60,255,100), new Color(130,60,255,0)}));
-            g.setStroke(new BasicStroke(1f));
-            g.drawLine(W/2-200, 412, W/2+200, 412);
-
-            // ── 12. Certificate ID + date ──────────────────────────
-            drawCentred(g, "Certificate No: CES-" + String.format("%04d", d.certId)
-                + "       Date of Issue: " + d.issueDate,
-                new Font("SansSerif", Font.PLAIN, 11),
-                new Color(120,110,160), W/2, 430);
-
-            // ── 13. Signature zone ─────────────────────────────────
-            int sigY = 490;
-            // Left sig
-            drawSignatureLine(g, W/4, sigY, "Organiser");
-            // Right sig
-            drawSignatureLine(g, 3*W/4, sigY, "Principal");
-
-            // ── 14. Winner ribbon (if not Participant) ─────────────
-            if (!"Participant".equalsIgnoreCase(d.certType)) {
-                drawRibbon(g, W, d.certType);
-            }
-
-            // ── 15. Bottom tagline ─────────────────────────────────
-            drawCentred(g, "Campus Event System  ·  Excellence in Participation",
-                new Font("SansSerif", Font.ITALIC, 10),
-                new Color(80,70,110), W/2, H-28);
-
-            g.dispose();
-        }
-
-        // ── helpers ───────────────────────────────────────────────
-
-        private String getTitleText() {
-            return switch (d.certType) {
-                case "Winner"    -> "Certificate of Excellence";
-                case "Runner-up" -> "Certificate of Achievement";
-                default          -> "Certificate of Participation";
-            };
-        }
-
-        private String getBodyLine() {
-            return switch (d.certType) {
-                case "Winner"    -> "has successfully WON the event";
-                case "Runner-up" -> "has achieved Runner-up position in the event";
-                default          -> "has successfully participated in the event";
-            };
-        }
-
-        private void drawCentred(Graphics2D g, String text, Font font, Color color, int cx, int y) {
-            g.setFont(font);
-            g.setColor(color);
-            FontMetrics fm = g.getFontMetrics();
-            g.drawString(text, cx - fm.stringWidth(text)/2, y);
-        }
-
-        private void drawBorderFrame(Graphics2D g, int m, int W, int H) {
-            // outer gold frame
-            g.setColor(new Color(200,160,40,180));
-            g.setStroke(new BasicStroke(2f));
-            g.drawRect(m, m, W-2*m, H-2*m);
-
-            // inner purple frame
-            g.setColor(new Color(130,60,255,120));
-            g.setStroke(new BasicStroke(1f));
-            g.drawRect(m+6, m+6, W-2*(m+6), H-2*(m+6));
-
-            // thin gold inner-inner
-            g.setColor(new Color(200,160,40,60));
-            g.setStroke(new BasicStroke(0.7f));
-            g.drawRect(m+10, m+10, W-2*(m+10), H-2*(m+10));
-        }
-
-        private void drawCornerOrnaments(Graphics2D g, int m, int W, int H) {
-            g.setColor(GOLD);
-            g.setStroke(new BasicStroke(1.5f));
-            int s = 22; // ornament size
-            int[][] corners = {{m,m},{W-m-s,m},{m,H-m-s},{W-m-s,H-m-s}};
-            for (int[] c : corners) {
-                int x=c[0], y=c[1];
-                // L-bracket ornament
-                g.drawLine(x,y, x+s,y);
-                g.drawLine(x,y, x,y+s);
-                // small diamond at corner
-                int[] dx={x+4,x+8,x+4,x},dy={y,y+4,y+8,y+4};
-                g.fillPolygon(dx,dy,4);
-            }
-        }
-
-        private void drawSeal(Graphics2D g, int cx, int cy, int r) {
-            // outer glow
-            g.setPaint(new RadialGradientPaint(cx,cy,r,
-                new float[]{0f,0.6f,1f},
-                new Color[]{new Color(130,60,255,100),new Color(130,60,255,40),new Color(0,0,0,0)}));
-            g.fillOval(cx-r,cy-r,r*2,r*2);
-
-            // circle border
-            g.setColor(GOLD);
-            g.setStroke(new BasicStroke(1.5f));
-            g.drawOval(cx-r+4,cy-r+4,(r-4)*2,(r-4)*2);
-            g.setColor(new Color(130,60,255,200));
-            g.setStroke(new BasicStroke(1f));
-            g.drawOval(cx-r+9,cy-r+9,(r-9)*2,(r-9)*2);
-
-            // star inside
-            drawStar(g, cx, cy, r-14, 6, GOLD);
-
-            // "CES" text
-            g.setFont(new Font("Georgia",Font.BOLD,11));
-            g.setColor(GOLD);
-            FontMetrics fm = g.getFontMetrics();
-            g.drawString("CES", cx - fm.stringWidth("CES")/2, cy + fm.getAscent()/2 - 2);
-        }
-
-        private void drawStar(Graphics2D g, int cx, int cy, int r, int points, Color c) {
-            int inner = r/2;
-            int[] xp = new int[points*2], yp = new int[points*2];
-            for (int i=0;i<points*2;i++) {
-                double angle = Math.PI/points * i - Math.PI/2;
-                int rad = (i%2==0) ? r : inner;
-                xp[i] = cx + (int)(rad * Math.cos(angle));
-                yp[i] = cy + (int)(rad * Math.sin(angle));
-            }
-            g.setColor(c);
-            g.fillPolygon(xp,yp,points*2);
-        }
-
-        private void drawSignatureLine(Graphics2D g, int cx, int y, String role) {
-            g.setColor(new Color(130,60,255,120));
-            g.setStroke(new BasicStroke(1f));
-            g.drawLine(cx-60, y, cx+60, y);
-
-            g.setFont(new Font("SansSerif",Font.PLAIN,11));
-            g.setColor(new Color(140,130,180));
-            FontMetrics fm = g.getFontMetrics();
-            g.drawString(role, cx - fm.stringWidth(role)/2, y+16);
-        }
-
-        private void drawRibbon(Graphics2D g, int W, String type) {
-            // top-right corner ribbon
-            Color c1 = "Winner".equals(type) ? new Color(220,170,20) : new Color(150,150,160);
-            Color c2 = "Winner".equals(type) ? new Color(255,210,60)  : new Color(190,190,200);
-
-            int rx = W - 30, ry = 30, size = 90;
-            int[] xp = {rx-size, rx, rx};
-            int[] yp = {ry,      ry, ry+size};
-            g.setPaint(new GradientPaint(rx-size,ry, c1, rx,ry+size, c2));
-            g.fillPolygon(xp,yp,3);
-
-            // text on ribbon
-            g.setColor(new Color(20,10,40));
-            g.setFont(new Font("Georgia",Font.BOLD,10));
-            Graphics2D gr = (Graphics2D) g.create();
-            gr.translate(rx-18, ry+18);
-            gr.rotate(Math.PI/4);
-            gr.drawString(type.toUpperCase(), -gr.getFontMetrics().stringWidth(type.toUpperCase())/2, 0);
-            gr.dispose();
-        }
+    private static String titleFor(String t) {
+        if ("Winner".equalsIgnoreCase(t))    return "CERTIFICATE OF EXCELLENCE";
+        if ("Runner-up".equalsIgnoreCase(t)) return "CERTIFICATE OF ACHIEVEMENT";
+        return "CERTIFICATE OF PARTICIPATION";
     }
 
-    // ── small UI helpers ──────────────────────────────────────────
-    private static JButton buildSmallBtn(String text) {
-        JButton btn = new JButton(text);
-        btn.setBackground(new Color(40,20,80));
-        btn.setForeground(new Color(200,190,230));
-        btn.setFont(new Font("SansSerif",Font.PLAIN,12));
-        btn.setFocusPainted(false);
-        btn.setBorder(BorderFactory.createLineBorder(new Color(130,60,255,80),1));
-        btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        return btn;
+    private static String bodyFor(String t) {
+        if ("Winner".equalsIgnoreCase(t))    return "has successfully WON the event";
+        if ("Runner-up".equalsIgnoreCase(t)) return "has achieved Runner-up position in the event";
+        return "has successfully participated in the event";
     }
 
-    private static JButton buildActionBtn(String text, boolean primary) {
+    private static String nvl(String s, String fb) {
+        return (s == null || s.isEmpty()) ? fb : s;
+    }
+
+    private static String safeName(String s) {
+        return (s == null ? "student" : s).replaceAll("[^a-zA-Z0-9]", "_");
+    }
+
+    // ── button helpers ────────────────────────────────────────────
+    private static JButton buildBtn(String text, boolean primary) {
         JButton btn = new JButton(text) {
             @Override protected void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g;
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                if (primary) {
-                    g2.setPaint(new GradientPaint(0,0,new Color(140,60,255),getWidth(),getHeight(),new Color(90,20,200)));
-                } else {
-                    g2.setColor(new Color(255,255,255,18));
-                }
-                g2.fillRoundRect(0,0,getWidth(),getHeight(),12,12);
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                                    RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(primary ? BLUE_MID : new Color(235, 238, 245));
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
                 if (!primary) {
-                    g2.setColor(new Color(130,60,255,80));
-                    g2.setStroke(new BasicStroke(1.5f));
-                    g2.drawRoundRect(0,0,getWidth()-1,getHeight()-1,12,12);
+                    g2.setColor(new Color(180, 200, 220));
+                    g2.setStroke(new BasicStroke(1f));
+                    g2.drawRoundRect(0, 0, getWidth()-1, getHeight()-1, 10, 10);
                 }
                 super.paintComponent(g);
             }
         };
-        btn.setContentAreaFilled(false); btn.setBorderPainted(false);
-        btn.setFocusPainted(false); btn.setOpaque(false);
-        btn.setForeground(Color.WHITE);
-        btn.setFont(new Font("Georgia",Font.BOLD,13));
-        btn.setPreferredSize(new Dimension(230,44));
+        btn.setContentAreaFilled(false);
+        btn.setBorderPainted(false);
+        btn.setFocusPainted(false);
+        btn.setOpaque(false);
+        btn.setForeground(primary ? WHITE : BLUE_DARK);
+        btn.setFont(new Font("SansSerif", Font.BOLD, 12));
+        btn.setPreferredSize(new Dimension(160, 36));
         btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return btn;
-    }
-
-    private static JLabel makeLabel(String text, Font font, Color color) {
-        JLabel l = new JLabel(text);
-        l.setFont(font); l.setForeground(color); l.setOpaque(false);
-        return l;
     }
 }
